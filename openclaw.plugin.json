@@ -1,0 +1,54 @@
+{
+  "name": "@oms/openclaw-memory",
+  "version": "0.1.0",
+  "description": "Long-term raw transcript memory for OpenClaw. Summary is navigation; raw is truth.",
+  "type": "module",
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ],
+    "compat": {
+      "pluginApi": ">=2026.3.24-beta.2",
+      "minGatewayVersion": "2026.3.24-beta.2"
+    },
+    "slots": {
+      "memory": "oms",
+      "contextEngine": "oms"
+    }
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": true,
+    "properties": {
+      "agentId": {
+        "type": "string"
+      },
+      "mode": {
+        "type": "string",
+        "enum": [
+          "off",
+          "auto",
+          "low",
+          "medium",
+          "high",
+          "xhigh"
+        ],
+        "default": "auto"
+      },
+      "dbPath": {
+        "type": "string"
+      },
+      "memoryRepoPath": {
+        "type": "string"
+      },
+      "recentCompleteTurns": {
+        "type": "number",
+        "default": 5
+      },
+      "debug": {
+        "type": "boolean",
+        "default": false
+      }
+    }
+  }
+}

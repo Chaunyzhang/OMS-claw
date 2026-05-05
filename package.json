@@ -1,0 +1,41 @@
+{
+  "name": "@oms/openclaw-memory",
+  "version": "0.1.0",
+  "description": "OpenClaw long-term raw memory and context engine plugin. Summary is navigation, raw is truth.",
+  "private": true,
+  "type": "module",
+  "main": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "files": [
+    "dist",
+    "openclaw.plugin.json",
+    "docs"
+  ],
+  "engines": {
+    "node": ">=24"
+  },
+  "openclaw": {
+    "extensions": [
+      "./dist/index.js"
+    ]
+  },
+  "dependencies": {
+    "gpt-tokenizer": "^2.5.0"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "typescript": "^5.9.0",
+    "vitest": "^3.0.0"
+  },
+  "scripts": {
+    "build:info": "node scripts/write-build-info.mjs",
+    "clean": "node scripts/clean-dist.mjs",
+    "build": "npm run clean && npm run build:info && tsc -p tsconfig.json && npm run build:info -- --json",
+    "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
+    "check": "npm run build && npm run test",
+    "doctor": "node --experimental-sqlite dist/scripts/doctor.js",
+    "case-pack": "node dist/scripts/build-case-pack.js",
+    "real-send": "node --experimental-sqlite dist/scripts/openclaw-send-one.js",
+    "runtime-report": "node --experimental-sqlite dist/scripts/runtime-report.js"
+  }
+}
