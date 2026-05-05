@@ -3,3 +3,5 @@ dist/
 *.tgz
 *.sqlite
 .omx/
+src/generated/build-info.ts
+src/generated/build-info.snapshot.json
