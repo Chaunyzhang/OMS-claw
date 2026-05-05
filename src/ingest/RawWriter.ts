@@ -36,6 +36,9 @@ export class RawWriter {
       });
       return {
         ok: false,
+        agentId: input.agentId ?? this.agentId,
+        sessionId: input.sessionId,
+        turnId: input.turnId,
         messageId: "",
         originalHash: "",
         sequence: -1,

@@ -137,6 +137,9 @@ export class RawMessageStore {
 
     return {
       ok: true,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      turnId,
       messageId,
       originalHash,
       sequence,

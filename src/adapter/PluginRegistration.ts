@@ -1,3 +1,4 @@
+import { basename, dirname } from "node:path";
 import { ConfigResolver } from "../core/ConfigResolver.js";
 import { Logger } from "../core/Logger.js";
 import { OmsOrchestrator } from "../core/OmsOrchestrator.js";
@@ -47,7 +48,7 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
     ),
     tool(
       "oms_fts_search",
-      "Search raw normalized text through SQLite FTS5 while honoring evidence policy.",
+      "Fallback raw normalized text search. For material/formal evidence, summary DAG expansion is required before answering; use oms_summary_search then oms_expand_evidence first.",
       jsonSchema({
         query: { type: "string" },
         evidencePolicy: {
@@ -96,6 +97,152 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
   orchestrator.markRegistered({ toolsRegistered: true });
 }
 
+function hasAvailableTool(availableTools: unknown, name: string): boolean {
+  if (!availableTools) {
+    return false;
+  }
+  if (availableTools instanceof Set) {
+    return availableTools.has(name);
+  }
+  if (Array.isArray(availableTools)) {
+    return availableTools.includes(name);
+  }
+  if (typeof availableTools === "object" && typeof (availableTools as { has?: unknown }).has === "function") {
+    return Boolean((availableTools as { has: (toolName: string) => boolean }).has(name));
+  }
+  return false;
+}
+
+function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode?: string } = {}): string[] {
+  const hasOmsTools =
+    hasAvailableTool(params.availableTools, "oms_summary_search") ||
+    hasAvailableTool(params.availableTools, "oms_expand_evidence") ||
+    hasAvailableTool(params.availableTools, "oms_fts_search");
+  if (!hasOmsTools) {
+    return [];
+  }
+
+  const lines = [
+    "## OMS Memory Recall",
+    "Before answering prior-conversation facts, dates, corrections, or formal memory tests, use OMS memory tools.",
+    "For formal tests, call oms_summary_search first with the exact question text, then call oms_expand_evidence on a summary hit before answering.",
+    "Do not answer from oms_fts_search alone in formal tests. FTS is only a fallback after summary navigation is empty, and any candidate still needs authoritative raw evidence."
+  ];
+  if (params.citationsMode === "off") {
+    lines.push("Citations are disabled: do not mention internal paths unless the user explicitly asks.");
+  } else {
+    lines.push("Mention evidence succinctly when it helps verification, but do not expose raw internal details unnecessarily.");
+  }
+  lines.push("");
+  return lines;
+}
+
+function createOmsMemoryRuntime(orchestrator: OmsOrchestrator) {
+  const manager = {
+    async search(query: string, opts: { maxResults?: number; minScore?: number } = {}) {
+      const hits = orchestrator.fts.search({
+        agentId: orchestrator.config.agentId,
+        query,
+        evidencePolicy: "general_history",
+        limit: opts.maxResults ?? 10
+      });
+      return hits.map((hit, index) => ({
+        source: "memory",
+        path: `oms/raw/${hit.messageId}.md`,
+        startLine: 1,
+        endLine: 1,
+        score: Math.max(0.01, 1 - index / Math.max(1, hits.length + 1)),
+        snippet: hit.originalText
+      }));
+    },
+    async readFile(params: { relPath?: string; path?: string }) {
+      const lookup = String(params.relPath ?? params.path ?? "");
+      const rawId = lookup.match(/raw_[A-Za-z0-9-]+/)?.[0];
+      if (!rawId) {
+        return {
+          path: lookup,
+          text: "",
+          disabled: true,
+          error: "OMS raw message id not found in requested path"
+        };
+      }
+      const message = orchestrator.rawMessages.byId(rawId);
+      if (!message) {
+        return {
+          path: lookup,
+          text: "",
+          disabled: true,
+          error: "OMS raw message not found"
+        };
+      }
+      return {
+        path: lookup,
+        text: message.originalText
+      };
+    },
+    status() {
+      return {
+        backend: "builtin",
+        provider: "oms",
+        model: "sqlite-fts5",
+        workspaceDir: dirname(orchestrator.config.dbPath),
+        dbPath: orchestrator.config.dbPath,
+        sources: ["memory"],
+        files: orchestrator.rawMessages.count(),
+        chunks: orchestrator.rawMessages.count(),
+        dirty: false,
+        custom: {
+          oms: {
+            agentId: orchestrator.config.agentId,
+            rawMessages: orchestrator.rawMessages.count(),
+            summaries: orchestrator.summaries.count()
+          }
+        }
+      };
+    },
+    async sync() {},
+    async probeEmbeddingAvailability() {
+      return { ok: true, provider: "oms", model: "sqlite-fts5" };
+    },
+    async probeVectorAvailability() {
+      return false;
+    },
+    async close() {}
+  };
+
+  return {
+    async getMemorySearchManager() {
+      return { manager };
+    },
+    resolveMemoryBackendConfig(params: { cfg?: { memory?: { citations?: string } } } = {}) {
+      return {
+        backend: "builtin",
+        citations: params.cfg?.memory?.citations ?? "auto",
+        oms: {
+          dbPath: orchestrator.config.dbPath,
+          agentId: orchestrator.config.agentId
+        }
+      };
+    },
+    async closeAllMemorySearchManagers() {
+      await manager.close();
+    }
+  };
+}
+
+function listOmsPublicArtifacts(orchestrator: OmsOrchestrator) {
+  return [
+    {
+      kind: "oms-sqlite-ledger",
+      workspaceDir: dirname(orchestrator.config.dbPath),
+      relativePath: basename(orchestrator.config.dbPath),
+      absolutePath: orchestrator.config.dbPath,
+      agentIds: [orchestrator.config.agentId],
+      contentType: "sqlite"
+    }
+  ];
+}
+
 const entry = {
   id: "oms",
   name: "OMS OpenClaw Memory",
@@ -115,14 +262,10 @@ const entry = {
         id: "oms",
         kind: "memory",
         description: "Raw transcript ledger with evidence expansion and Git Markdown export.",
+        promptBuilder: buildOmsPromptSection,
+        runtime: createOmsMemoryRuntime(orchestrator),
         publicArtifacts: {
-          listArtifacts: () => [
-            {
-              kind: "timeline",
-              path: config.memoryRepoPath,
-              format: "oms-timeline-v1"
-            }
-          ]
+          listArtifacts: () => listOmsPublicArtifacts(orchestrator)
         },
         controlPanel: controlPanelContract()
       });

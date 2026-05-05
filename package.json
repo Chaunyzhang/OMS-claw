@@ -9,7 +9,10 @@
   "files": [
     "dist",
     "openclaw.plugin.json",
-    "docs"
+    "docs",
+    "realtest/cases",
+    "realtest/judge",
+    "realtest/schemas"
   ],
   "engines": {
     "node": ">=24"
@@ -23,6 +26,7 @@
     "gpt-tokenizer": "^2.5.0"
   },
   "devDependencies": {
+    "@agentclientprotocol/sdk": "^0.21.0",
     "@types/node": "^24.0.0",
     "typescript": "^5.9.0",
     "vitest": "^3.0.0"
@@ -36,6 +40,14 @@
     "doctor": "node --experimental-sqlite dist/scripts/doctor.js",
     "case-pack": "node dist/scripts/build-case-pack.js",
     "real-send": "node --experimental-sqlite dist/scripts/openclaw-send-one.js",
-    "runtime-report": "node --experimental-sqlite dist/scripts/runtime-report.js"
+    "runtime-report": "node --experimental-sqlite dist/scripts/runtime-report.js",
+    "realtest:preflight": "node --experimental-sqlite dist/realtest/scripts/preflight-openclaw.js",
+    "realtest:send-one": "node dist/realtest/scripts/acp-send-one.js",
+    "realtest:wait-ready": "node --experimental-sqlite dist/realtest/scripts/wait-oms-ready.js",
+    "realtest:collect": "node --experimental-sqlite dist/realtest/scripts/collect-openclaw-artifacts.js",
+    "realtest:bundle": "node dist/realtest/scripts/build-judge-bundle.js",
+    "realtest:judge": "node dist/realtest/scripts/run-codex-judge.js",
+    "realtest:verdict": "node dist/realtest/scripts/merge-verdict.js",
+    "realtest:case": "node --experimental-sqlite dist/realtest/scripts/run-real-case.js"
   }
 }

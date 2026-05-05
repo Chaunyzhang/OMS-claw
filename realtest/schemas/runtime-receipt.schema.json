@@ -1,0 +1,5 @@
+{
+  "type": "object",
+  "required": ["ok", "status"],
+  "additionalProperties": true
+}

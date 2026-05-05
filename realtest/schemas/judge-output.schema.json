@@ -1,0 +1,64 @@
+{
+  "type": "object",
+  "required": [
+    "run_valid",
+    "answer_correct",
+    "required_module_used",
+    "authoritative_evidence_valid",
+    "contamination_detected",
+    "overall_pass",
+    "status",
+    "final_answer",
+    "expected_answer",
+    "matched_answer_variant",
+    "required_module",
+    "used_module",
+    "evidence_packet_id",
+    "raw_excerpt_hash",
+    "selected_authoritative_raw_count",
+    "summary_derived_raw_count",
+    "rationale",
+    "evidence_refs",
+    "failure_reasons"
+  ],
+  "properties": {
+    "run_valid": { "type": "boolean" },
+    "answer_correct": { "type": "boolean" },
+    "required_module_used": { "type": "boolean" },
+    "authoritative_evidence_valid": { "type": "boolean" },
+    "contamination_detected": { "type": "boolean" },
+    "overall_pass": { "type": "boolean" },
+    "status": {
+      "type": "string",
+      "enum": [
+        "PASS",
+        "ANSWER_FAIL",
+        "MODULE_FAIL",
+        "EVIDENCE_FAIL",
+        "CONTAMINATION_FAIL",
+        "INVALID_RUN",
+        "ENV_FAIL",
+        "JUDGE_UNCERTAIN"
+      ]
+    },
+    "final_answer": { "type": "string" },
+    "expected_answer": { "type": "string" },
+    "matched_answer_variant": { "type": ["string", "null"] },
+    "required_module": { "type": ["string", "null"] },
+    "used_module": { "type": ["string", "null"] },
+    "evidence_packet_id": { "type": ["string", "null"] },
+    "raw_excerpt_hash": { "type": ["string", "null"] },
+    "selected_authoritative_raw_count": { "type": "integer" },
+    "summary_derived_raw_count": { "type": "integer" },
+    "rationale": { "type": "string" },
+    "evidence_refs": {
+      "type": "array",
+      "items": { "type": "string" }
+    },
+    "failure_reasons": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "additionalProperties": false
+}

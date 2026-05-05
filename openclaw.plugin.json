@@ -1,4 +1,6 @@
 {
+  "id": "oms",
+  "kind": "memory",
   "name": "@oms/openclaw-memory",
   "version": "0.1.0",
   "description": "Long-term raw transcript memory for OpenClaw. Summary is navigation; raw is truth.",

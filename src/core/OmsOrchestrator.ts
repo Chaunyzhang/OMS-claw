@@ -84,7 +84,7 @@ export class OmsOrchestrator {
       config,
       this.build()
     );
-    this.summarySearch = new SummarySearch(this.summaries, this.sourceEdges);
+    this.summarySearch = new SummarySearch(this.summaries, this.sourceEdges, this.rawMessages);
     this.retrievalRouter = new RetrievalRouter(this.summarySearch, this.fts, this.expander);
   }
 
@@ -111,17 +111,22 @@ export class OmsOrchestrator {
     return { ok: receipts.every((receipt) => receipt.ok), receipts };
   }
 
-  ingestBatch(inputs: unknown[]) {
-    const results = inputs.map((input) => this.ingest(input));
+  ingestBatch(inputs: unknown[] | unknown) {
+    const payloads = Array.isArray(inputs) ? inputs : [inputs];
+    const results = payloads.map((input) => this.ingest(input));
     return {
       ok: results.every((result) => result.ok),
       results
     };
   }
 
-  assemble(input: { sessionId?: string } = {}) {
+  assemble(input: { sessionId?: string; messages?: unknown[]; availableTools?: Set<string> | string[] } = {}) {
     const assembler = new ContextAssembler(this.rawMessages, this.contextBridge, this.config);
-    return assembler.assemble({ sessionId: input.sessionId ?? "default-session" });
+    return assembler.assemble({
+      sessionId: input.sessionId ?? "default-session",
+      messages: input.messages,
+      availableTools: input.availableTools
+    });
   }
 
   compact(input: { sessionId?: string; turnId?: string } = {}) {
@@ -144,14 +149,48 @@ export class OmsOrchestrator {
     return { ...plan, compacted: true };
   }
 
-  afterTurn(input: { sessionId: string; turnId: string }) {
-    return this.queue.enqueue({
-      id: `summary:${input.turnId}`,
-      kind: "leaf_summary",
-      run: () => {
-        this.summaryDag.buildLeafForTurn({ agentId: this.config.agentId, sessionId: input.sessionId, turnId: input.turnId });
-      }
-    });
+  async afterTurn(input: { sessionId?: string; turnId?: string; messages?: unknown[]; prePromptMessageCount?: number }) {
+    const sessionId = input.sessionId ?? "default-session";
+    let ingestResult: ReturnType<OmsOrchestrator["ingest"]> | undefined;
+    if (Array.isArray(input.messages)) {
+      const start =
+        typeof input.prePromptMessageCount === "number" && Number.isFinite(input.prePromptMessageCount)
+          ? Math.max(0, Math.floor(input.prePromptMessageCount))
+          : 0;
+      ingestResult = this.ingest({
+        sessionId,
+        messages: input.messages.slice(start)
+      });
+    }
+
+    const turnIds = input.turnId
+      ? [input.turnId]
+      : Array.from(
+          new Set(
+            (ingestResult?.receipts ?? [])
+              .filter((receipt) => receipt.ok && typeof receipt.turnId === "string" && receipt.turnId.length > 0)
+              .map((receipt) => receipt.turnId as string)
+          )
+        );
+    if (turnIds.length === 0) {
+      return {
+        ok: ingestResult?.ok ?? true,
+        summarized: false,
+        reason: "turn_id_unavailable",
+        receipts: ingestResult?.receipts ?? []
+      };
+    }
+
+    for (const turnId of turnIds) {
+      await this.queue.enqueue({
+        id: `summary:${turnId}`,
+        kind: "leaf_summary",
+        run: () => {
+          this.summaryDag.buildLeafForTurn({ agentId: this.config.agentId, sessionId, turnId });
+        }
+      });
+    }
+    return { ok: ingestResult?.ok ?? true, summarized: true, turnIds, receipts: ingestResult?.receipts ?? [] };
   }
 
   prepareSubagentSpawn(input: Record<string, unknown> = {}) {
@@ -219,13 +258,42 @@ export class OmsOrchestrator {
   }
 
   ftsSearchTool(params: Record<string, unknown>) {
+    const query = String(params.query ?? "");
     const policy =
-      params.evidencePolicy === undefined ? this.intentClassifier.classify(String(params.query ?? "")) : (params.evidencePolicy as EvidencePolicyRequest);
+      params.evidencePolicy === undefined ? this.intentClassifier.classify(query) : (params.evidencePolicy as EvidencePolicyRequest);
+    const caseId = params.caseId === undefined ? undefined : String(params.caseId);
+    if (policy === "material_evidence" && this.config.summaryEnabled) {
+      const summaryHits = this.summarySearch.search(this.config.agentId, query, Number(params.limit ?? 10));
+      const expanded = summaryHits.map((hit) => ({
+        navigationHit: hit,
+        evidencePacket: this.expander.expand({
+          summaryId: hit.summaryId,
+          query,
+          mode: "high",
+          evidencePolicy: policy,
+          caseId
+        })
+      }));
+      const delivered = expanded.find((item) => item.evidencePacket.status === "delivered");
+      if (delivered ?? expanded[0]) {
+        return {
+          hitKind: "summary_dag_expand_evidence",
+          usedModule: "summary_dag_expand_evidence",
+          rawExactSearchOnly: false,
+          ftsFallbackUsed: false,
+          note:
+            "Material-evidence queries must not answer from FTS alone. OMS found summary navigation and expanded it to an authoritative raw evidence packet.",
+          summaryNavigationHitCount: summaryHits.length,
+          selected: delivered ?? expanded[0],
+          attempted: expanded
+        };
+      }
+    }
     return this.fts.search({
       agentId: this.config.agentId,
-      query: String(params.query ?? ""),
+      query,
       evidencePolicy: policy,
-      caseId: params.caseId === undefined ? undefined : String(params.caseId),
+      caseId,
       limit: params.limit === undefined ? undefined : Number(params.limit)
     });
   }
@@ -305,17 +373,21 @@ export class OmsOrchestrator {
 
   createContextEngine() {
     return {
-      id: "oms",
-      ownsCompaction: true,
+      info: {
+        id: "oms",
+        name: "OMS OpenClaw Context Engine",
+        version: this.build().packageVersion,
+        ownsCompaction: true
+      },
       bootstrap: () => this.status(),
       ingest: (payload: unknown) => this.ingest(payload),
-      ingestBatch: (payloads: unknown[]) => this.ingestBatch(payloads),
-      assemble: (input: { sessionId?: string } = {}) => this.assemble(input),
+      ingestBatch: (payloads: unknown[] | unknown) => this.ingestBatch(payloads),
+      assemble: (input: { sessionId?: string; messages?: unknown[]; availableTools?: Set<string> | string[] } = {}) => this.assemble(input),
       compact: (input: { sessionId?: string; turnId?: string } = {}) => this.compact(input),
-      afterTurn: (input: { sessionId: string; turnId: string }) => this.afterTurn(input),
+      afterTurn: (input: { sessionId?: string; turnId?: string; messages?: unknown[]; prePromptMessageCount?: number }) => this.afterTurn(input),
       prepareSubagentSpawn: (input: Record<string, unknown> = {}) => this.prepareSubagentSpawn(input),
       onSubagentEnded: (input: Record<string, unknown> = {}) => this.onSubagentEnded(input),
-      dispose: () => this.connection.close()
+      dispose: () => {}
     };
   }
 }

@@ -1,0 +1,38 @@
+{
+  "caseId": "locomo_melanie_sunrise",
+  "suite": "locomo_poisoned_real_openclaw",
+  "description": "Melanie sunrise year from authoritative material raw via summary DAG evidence.",
+  "requiredModule": "summary_dag_expand_evidence",
+  "memoryMode": "high",
+  "agentIsolation": "dedicated_agent",
+  "materialSessionKeySuffix": "material",
+  "questionSessionKeySuffix": "question",
+  "materialFiles": ["material-001.md", "material-002.md"],
+  "formalQuestionFile": "formal-question.md",
+  "answerKey": {
+    "expected": "2022",
+    "acceptable": ["2022", "in 2022"],
+    "forbidden": ["no record", "not found", "2023", "last year"]
+  },
+  "queryPolicy": {
+    "exactQuestionRequired": true,
+    "forbidKeywordRewrite": true
+  },
+  "evidencePolicy": {
+    "requireAuthoritativeMaterialRaw": true,
+    "forbidAssistantRawAsMaterialEvidence": true,
+    "forbidFormalQuestionAsEvidence": true,
+    "forbidDiagnosticRawAsEvidence": true,
+    "requireDeliveredToOpenClaw": true,
+    "requireEvidencePacketId": true,
+    "requireRawExcerptHash": true,
+    "requireSummaryDerivedRaw": true,
+    "forbidRawExactSearchForSummaryCase": true
+  },
+  "timeouts": {
+    "sendTurnMs": 600000,
+    "materialReadyMs": 900000,
+    "questionTurnMs": 600000,
+    "judgeMs": 600000
+  }
+}

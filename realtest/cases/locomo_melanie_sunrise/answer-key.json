@@ -1,0 +1,5 @@
+{
+  "expected": "2022",
+  "acceptable": ["2022", "in 2022"],
+  "forbidden": ["no record", "not found", "2023", "last year"]
+}

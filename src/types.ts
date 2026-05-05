@@ -107,6 +107,9 @@ export interface RawMessage {
 
 export interface RawWriteReceipt {
   ok: boolean;
+  agentId?: string;
+  sessionId?: string;
+  turnId?: string;
   messageId: string;
   originalHash: string;
   sequence: number;
@@ -142,6 +145,7 @@ export interface SummarySearchHit {
   sourceSummaryId: string;
   sourceEdgeCount: number;
   rawCandidateCount: number;
+  authoritativeMaterialRawCount: number;
   traceHealth: "ok" | "broken" | "unknown";
   summaryTextIsNotEvidence: true;
 }

@@ -5,3 +5,4 @@ dist/
 .omx/
 src/generated/build-info.ts
 src/generated/build-info.snapshot.json
+realtest/artifacts/

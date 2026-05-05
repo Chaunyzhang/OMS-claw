@@ -1,0 +1,14 @@
+{
+  "type": "object",
+  "required": [
+    "caseId",
+    "requiredModule",
+    "memoryMode",
+    "materialFiles",
+    "formalQuestionFile",
+    "answerKey",
+    "evidencePolicy",
+    "timeouts"
+  ],
+  "additionalProperties": true
+}
