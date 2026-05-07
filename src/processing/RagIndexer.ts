@@ -1,5 +1,1 @@
-export class RagIndexer {
-  candidates(): Array<Record<string, unknown>> {
-    return [];
-  }
-}
+export { EmbeddingBuilder as RagIndexer } from "./EmbeddingBuilder.js";

@@ -23,6 +23,7 @@ function hashOriginal(text: string): string {
 
 function mapRaw(row: Record<string, unknown>): RawMessage {
   return {
+    rawId: String(row.message_id),
     messageId: String(row.message_id),
     agentId: String(row.agent_id),
     sessionId: String(row.session_id),
@@ -41,12 +42,23 @@ function mapRaw(row: Record<string, unknown>): RawMessage {
     sourcePurpose: row.source_purpose as RawMessage["sourcePurpose"],
     sourceAuthority: row.source_authority as RawMessage["sourceAuthority"],
     retrievalAllowed: Number(row.retrieval_allowed) === 1,
+    evidenceAllowed: Number(row.evidence_allowed ?? 1) === 1,
     evidencePolicyMask: row.evidence_policy_mask as RawMessage["evidencePolicyMask"],
     caseId: row.case_id === null ? undefined : String(row.case_id),
     parentMessageId: row.parent_message_id === null ? undefined : String(row.parent_message_id),
     metadata: JSON.parse(String(row.metadata_json ?? "{}")) as Record<string, unknown>,
     turnIndex: row.turn_index === null || row.turn_index === undefined ? undefined : Number(row.turn_index)
   };
+}
+
+function defaultEvidenceAllowed(input: RawWriteInput): boolean {
+  if (input.retrievalAllowed === false) {
+    return false;
+  }
+  if (input.evidencePolicyMask === "never_evidence" || input.evidencePolicyMask === "debug_only") {
+    return false;
+  }
+  return !["formal_question", "assistant_storage_receipt", "diagnostic", "debug_note"].includes(input.sourcePurpose ?? "");
 }
 
 export class RawMessageStore {
@@ -87,6 +99,8 @@ export class RawMessageStore {
     const createdAt = input.createdAt ?? new Date().toISOString();
     const turnId = input.turnId ?? `turn_${input.sessionId}_${input.turnIndex ?? sequence}`;
     const turnIndex = input.turnIndex ?? sequence;
+    const retrievalAllowed = input.retrievalAllowed === false ? 0 : 1;
+    const evidenceAllowed = input.evidenceAllowed ?? defaultEvidenceAllowed(input);
 
     this.ensureSession({ agentId: input.agentId, sessionId: input.sessionId, caseId: input.caseId });
     this.ensureTurn({ agentId: input.agentId, sessionId: input.sessionId, turnId, turnIndex });
@@ -97,8 +111,9 @@ export class RawMessageStore {
           message_id, agent_id, session_id, turn_id, role, event_type, created_at, sequence,
           original_text, normalized_text, token_count, original_hash, visible_to_user, interrupted,
           source_scope, source_purpose, source_authority, retrieval_allowed, evidence_policy_mask,
-          case_id, parent_message_id, metadata_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          case_id, parent_message_id, metadata_json, evidence_allowed, observed_at, turn_index,
+          message_state, sensitive_mask_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'created', ?)`
       )
       .run(
         messageId,
@@ -117,21 +132,27 @@ export class RawMessageStore {
         input.sourceScope ?? "agent",
         input.sourcePurpose ?? "general_chat",
         input.sourceAuthority ?? "visible_transcript",
-        input.retrievalAllowed === false ? 0 : 1,
+        retrievalAllowed,
         input.evidencePolicyMask ?? "general_history",
         input.caseId ?? null,
         input.parentMessageId ?? null,
-        JSON.stringify(input.metadata ?? {})
+        JSON.stringify(input.metadata ?? {}),
+        evidenceAllowed ? 1 : 0,
+        createdAt,
+        turnIndex,
+        JSON.stringify((input.metadata?.secretScan as Record<string, unknown> | undefined) ?? {})
       );
 
     const rowId = (this.db.prepare("SELECT rowid FROM raw_messages WHERE message_id = ?").get(messageId) as { rowid: number }).rowid;
 
-    this.db
-      .prepare(
-        `INSERT INTO raw_messages_fts (rowid, message_id, agent_id, session_id, role, normalized_text)
-         VALUES (?, ?, ?, ?, ?, ?)`
-      )
-      .run(rowId, messageId, input.agentId, input.sessionId, input.role, normalizedText);
+    this.insertCandidateIndexes({
+      rowId,
+      messageId,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      role: input.role,
+      normalizedText
+    });
 
     this.updateTurnMessage(turnId, input.role, messageId);
 
@@ -145,7 +166,8 @@ export class RawMessageStore {
       sequence,
       sourcePurpose: input.sourcePurpose ?? "general_chat",
       sourceAuthority: input.sourceAuthority ?? "visible_transcript",
-      retrievalAllowed: input.retrievalAllowed !== false
+      retrievalAllowed: input.retrievalAllowed !== false,
+      evidenceAllowed
     };
   }
 
@@ -221,5 +243,62 @@ export class RawMessageStore {
   private updateTurnMessage(turnId: string, role: "user" | "assistant", messageId: string): void {
     const column = role === "user" ? "user_message_id" : "assistant_message_id";
     this.db.prepare(`UPDATE turns SET ${column} = ? WHERE turn_id = ?`).run(messageId, turnId);
+  }
+
+  private insertCandidateIndexes(input: {
+    rowId: number;
+    messageId: string;
+    agentId: string;
+    sessionId: string;
+    role: "user" | "assistant";
+    normalizedText: string;
+  }): void {
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO raw_messages_fts (rowid, message_id, agent_id, session_id, role, normalized_text)
+           VALUES (?, ?, ?, ?, ?, ?)`
+        )
+        .run(input.rowId, input.messageId, input.agentId, input.sessionId, input.role, input.normalizedText);
+      this.markFeature("ftsBm25", "ready");
+    } catch (error) {
+      this.markFeature("ftsBm25", "degraded", error);
+    }
+
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO raw_trigram (rowid, message_id, agent_id, session_id, normalized_text)
+           VALUES (?, ?, ?, ?, ?)`
+        )
+        .run(input.rowId, input.messageId, input.agentId, input.sessionId, input.normalizedText);
+      this.markFeature("trigram", "ready");
+    } catch (error) {
+      this.markFeature("trigram", "degraded", error);
+    }
+  }
+
+  private markFeature(feature: string, status: string, error?: unknown): void {
+    try {
+      this.db
+        .prepare(
+          `INSERT INTO feature_health (feature, status, last_ok_at, last_error_at, last_error, metadata_json)
+           VALUES (?, ?, ?, ?, ?, '{}')
+           ON CONFLICT(feature) DO UPDATE SET
+             status=excluded.status,
+             last_ok_at=COALESCE(excluded.last_ok_at, feature_health.last_ok_at),
+             last_error_at=COALESCE(excluded.last_error_at, feature_health.last_error_at),
+             last_error=excluded.last_error`
+        )
+        .run(
+          feature,
+          status,
+          error === undefined ? new Date().toISOString() : null,
+          error === undefined ? null : new Date().toISOString(),
+          error === undefined ? null : error instanceof Error ? error.message : String(error)
+        );
+    } catch {
+      // Feature health must never turn an optional index failure into raw-write failure.
+    }
   }
 }

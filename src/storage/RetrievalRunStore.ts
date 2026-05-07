@@ -1,4 +1,4 @@
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import type { DatabaseSync } from "node:sqlite";
 import type { BuildInfo, EvidencePacket, OmsConfig } from "../types.js";
 
@@ -72,8 +72,9 @@ export class RetrievalRunStore {
           packet_id, run_id, agent_id, created_at, status,
           selected_authoritative_raw_count, selected_raw_count, summary_derived_raw_count,
           raw_message_ids_json, source_summary_ids_json, source_edge_ids_json,
-          raw_excerpt_hash, raw_excerpt_preview_json, authority_report_json, delivery_report_json
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+          raw_excerpt_hash, raw_excerpt_preview_json, authority_report_json, delivery_report_json,
+          query_id, fusion_run_id, session_id, metadata_json
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
       )
       .run(
         packet.packetId,
@@ -90,8 +91,38 @@ export class RetrievalRunStore {
         packet.rawExcerptHash,
         JSON.stringify(packet.rawExcerpts.slice(0, 10)),
         JSON.stringify(packet.authorityReport),
-        JSON.stringify(packet.deliveryReceipt)
+        JSON.stringify(packet.deliveryReceipt),
+        packet.queryId ?? null,
+        packet.fusionRunId ?? null,
+        packet.rawExcerpts[0]?.sessionId ?? null,
+        JSON.stringify({ sourceRoutes: packet.sourceRoutes ?? [] })
       );
+    const insertItem = this.db.prepare(
+      `INSERT OR REPLACE INTO evidence_packet_items (
+        packet_id, item_index, raw_id, agent_id, session_id, role, sequence,
+        excerpt_text, excerpt_hash, source_purpose, source_authority, evidence_allowed,
+        window_start_sequence, window_end_sequence, metadata_json
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`
+    );
+    packet.rawExcerpts.forEach((excerpt, index) => {
+      insertItem.run(
+        packet.packetId,
+        index,
+        excerpt.messageId,
+        agentId,
+        excerpt.sessionId,
+        excerpt.role,
+        excerpt.sequence,
+        excerpt.originalText,
+        `sha256:${createHash("sha256").update(excerpt.originalText, "utf8").digest("hex")}`,
+        excerpt.sourcePurpose,
+        excerpt.sourceAuthority,
+        excerpt.evidenceAllowed === false ? 0 : 1,
+        excerpt.sequence,
+        excerpt.sequence,
+        JSON.stringify({ turnIndex: excerpt.turnIndex, sourceRoutes: packet.sourceRoutes ?? [] })
+      );
+    });
   }
 
   countRuns(): number {

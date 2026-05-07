@@ -84,7 +84,7 @@ describe("poison tests", () => {
     oms.connection.close();
   });
 
-  it("keeps transcript truncated receipts out of evidence", () => {
+  it("keeps transcript truncated receipts out of evidence", async () => {
     const oms = createOms();
     oms.ingest({
       sessionId: "receipt",
@@ -93,8 +93,9 @@ describe("poison tests", () => {
       role: "assistant",
       content: "transcript truncated"
     });
-    const hits = oms.ftsSearchTool({ query: "transcript truncated", evidencePolicy: "general_history" });
-    expect(hits).toHaveLength(0);
+    const result = await oms.ftsSearchTool({ query: "transcript truncated", evidencePolicy: "general_history" });
+    expect(result.ok).toBe(false);
+    expect(result.candidateCount).toBe(0);
     oms.connection.close();
   });
 
@@ -106,7 +107,7 @@ describe("poison tests", () => {
     oms.connection.close();
   });
 
-  it("prefers the latest correction in raw FTS results", () => {
+  it("prefers the latest correction in raw FTS results", async () => {
     const oms = createOms();
     oms.ingest({
       sessionId: "version",
@@ -122,8 +123,9 @@ describe("poison tests", () => {
       role: "user",
       content: "Correction: Project codename is cobalt."
     });
-    const hits = oms.ftsSearchTool({ query: "Project codename", evidencePolicy: "general_history" });
-    expect(hits[0].originalText).toContain("cobalt");
+    const result = await oms.ftsSearchTool({ query: "Project codename", evidencePolicy: "general_history" });
+    expect(result.packet?.status).toBe("delivered");
+    expect(result.packet?.rawExcerpts[0].originalText).toContain("cobalt");
     oms.connection.close();
   });
 

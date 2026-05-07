@@ -4,8 +4,15 @@ import { ContextAssembler } from "../context/ContextAssembler.js";
 import { CompactionPlanner } from "../context/CompactionPlanner.js";
 import { ContextBridge } from "../context/ContextBridge.js";
 import { SummaryDagBuilder } from "../processing/SummaryDagBuilder.js";
+import { EmbeddingBuilder } from "../processing/EmbeddingBuilder.js";
+import { createEmbeddingProvider } from "../processing/EmbeddingProvider.js";
+import type { EmbeddingProvider } from "../processing/EmbeddingProvider.js";
+import { GraphBuilder } from "../processing/GraphBuilder.js";
+import { CandidateLaneStore } from "../storage/CandidateLaneStore.js";
 import { ConfigStore } from "../storage/ConfigStore.js";
+import { EmbeddingStore } from "../storage/EmbeddingStore.js";
 import { EventStore } from "../storage/EventStore.js";
+import { GraphStore } from "../storage/GraphStore.js";
 import { RawMessageStore } from "../storage/RawMessageStore.js";
 import { RetrievalRunStore } from "../storage/RetrievalRunStore.js";
 import { SQLiteConnection } from "../storage/SQLiteConnection.js";
@@ -17,12 +24,19 @@ import { FtsSearch } from "../retrieval/FtsSearch.js";
 import { EvidenceExpander } from "../retrieval/EvidenceExpander.js";
 import { SummarySearch } from "../retrieval/SummarySearch.js";
 import { RetrievalRouter } from "../retrieval/RetrievalRouter.js";
+import { FTS5Bm25Lane } from "../retrieval/lanes/FTS5Bm25Lane.js";
+import { TrigramLane } from "../retrieval/lanes/TrigramLane.js";
+import { SummaryDagLane } from "../retrieval/lanes/SummaryDagLane.js";
+import { AnnVectorLane } from "../retrieval/lanes/AnnVectorLane.js";
+import { GraphCteLane } from "../retrieval/lanes/GraphCteLane.js";
+import { SQLRRFusion } from "../retrieval/SQLRRFusion.js";
 import { QueryIntentClassifier } from "../retrieval/QueryIntentClassifier.js";
 import { TimelineExporter } from "../git/TimelineExporter.js";
 import { RuntimeAttestation } from "./RuntimeAttestation.js";
 import { TaskQueue } from "./TaskQueue.js";
 import { Logger } from "./Logger.js";
-import type { BuildInfo, EvidencePolicyRequest, OmsConfig, OmsStatus, RawWriteInput } from "../types.js";
+import { FeatureHealthRegistry } from "./FeatureHealthRegistry.js";
+import type { BuildInfo, EvidencePolicyRequest, OmsConfig, OmsStatus, RawMessage, RawWriteInput } from "../types.js";
 
 export interface RegistrationState {
   contextEngineRegistered: boolean;
@@ -39,8 +53,15 @@ export class OmsOrchestrator {
   readonly summaries: SummaryStore;
   readonly sourceEdges: SourceEdgeStore;
   readonly retrievalRuns: RetrievalRunStore;
+  readonly laneStore: CandidateLaneStore;
+  readonly featureHealth: FeatureHealthRegistry;
+  readonly embeddings: EmbeddingStore;
+  readonly embeddingProvider: EmbeddingProvider;
+  readonly graph: GraphStore;
   readonly rawWriter: RawWriter;
   readonly summaryDag: SummaryDagBuilder;
+  readonly embeddingBuilder: EmbeddingBuilder;
+  readonly graphBuilder: GraphBuilder;
   readonly fts: FtsSearch;
   readonly expander: EvidenceExpander;
   readonly summarySearch: SummarySearch;
@@ -73,8 +94,15 @@ export class OmsOrchestrator {
     this.summaries = new SummaryStore(this.connection.db);
     this.sourceEdges = new SourceEdgeStore(this.connection.db);
     this.retrievalRuns = new RetrievalRunStore(this.connection.db);
+    this.laneStore = new CandidateLaneStore(this.connection.db);
+    this.featureHealth = new FeatureHealthRegistry(this.connection.db);
+    this.embeddings = new EmbeddingStore(this.connection.db);
+    this.embeddingProvider = createEmbeddingProvider(config);
+    this.graph = new GraphStore(this.connection.db);
     this.rawWriter = new RawWriter(this.rawMessages, this.events, config.agentId);
     this.summaryDag = new SummaryDagBuilder(this.summaries, this.sourceEdges, this.rawMessages, this.events);
+    this.embeddingBuilder = new EmbeddingBuilder(this.rawMessages, this.embeddings, this.embeddingProvider);
+    this.graphBuilder = new GraphBuilder(this.rawMessages, this.graph);
     this.fts = new FtsSearch(this.connection.db);
     this.expander = new EvidenceExpander(
       this.rawMessages,
@@ -85,7 +113,21 @@ export class OmsOrchestrator {
       this.build()
     );
     this.summarySearch = new SummarySearch(this.summaries, this.sourceEdges, this.rawMessages);
-    this.retrievalRouter = new RetrievalRouter(this.summarySearch, this.fts, this.expander);
+    this.retrievalRouter = new RetrievalRouter(
+      config,
+      this.build(),
+      this.rawMessages,
+      this.retrievalRuns,
+      this.laneStore,
+      this.featureHealth,
+      this.expander,
+      new FTS5Bm25Lane(this.connection.db),
+      new TrigramLane(this.connection.db),
+      new SummaryDagLane(this.summarySearch, this.sourceEdges, this.rawMessages),
+      new AnnVectorLane(config, this.embeddingBuilder, this.embeddings, this.embeddingProvider),
+      new GraphCteLane(this.connection.db, this.graphBuilder, this.graph),
+      new SQLRRFusion(this.connection.db)
+    );
   }
 
   build(): BuildInfo {
@@ -190,6 +232,22 @@ export class OmsOrchestrator {
         }
       });
     }
+    if (this.vectorRetrievalConfigured()) {
+      await this.queue.enqueue({
+        id: `embedding:${sessionId}:${Date.now()}`,
+        kind: "embedding_build",
+        run: () => this.embeddingBuilder.buildForAgent(this.config.agentId).then(() => undefined)
+      });
+    }
+    if (this.config.graphEnabled) {
+      await this.queue.enqueue({
+        id: `graph:${sessionId}:${Date.now()}`,
+        kind: "graph_extract",
+        run: () => {
+          this.graphBuilder.buildForAgent(this.config.agentId);
+        }
+      });
+    }
     return { ok: ingestResult?.ok ?? true, summarized: true, turnIds, receipts: ingestResult?.receipts ?? [] };
   }
 
@@ -207,17 +265,19 @@ export class OmsOrchestrator {
   }
 
   timeline(limit = 100) {
-    return this.rawMessages.allForAgent(this.config.agentId, limit);
+    return this.rawMessages.allForAgent(this.config.agentId, limit).map((message) => this.redactedRaw(message));
   }
 
   status(): OmsStatus {
     const queueCounts = this.queue.counts();
+    const features = this.featureHealth.statusMap();
+    if (!this.vectorRetrievalConfigured()) {
+      features.annVector = "blocked";
+    }
     return {
       ok: this.lastError === undefined,
       agentId: this.config.agentId,
       mode: this.config.mode,
-      dbPath: this.config.dbPath,
-      memoryRepoPath: this.config.memoryRepoPath,
       build: this.build(),
       openclaw: this.registration,
       counts: {
@@ -226,21 +286,46 @@ export class OmsOrchestrator {
         sourceEdges: this.sourceEdges.count(),
         retrievalRuns: this.retrievalRuns.countRuns(),
         evidencePackets: this.retrievalRuns.countPackets(),
+        embeddingChunks: this.embeddings.count(),
+        graphNodes: this.graph.countNodes(),
+        graphEdges: this.graph.countEdges(),
         pendingJobs: queueCounts.pendingJobs,
         failedJobs: queueCounts.failedJobs
       },
       health: {
         rawWriteOk: this.lastError !== "raw_write_not_confirmed",
-        ftsReady: true,
-        summaryDagOk: true,
+        ftsReady: features.ftsBm25 !== "failed" && features.ftsBm25 !== "degraded",
+        trigramReady: features.trigram !== "failed" && features.trigram !== "degraded" && features.trigram !== "blocked",
+        summaryDagOk: features.summaryDag !== "failed" && features.summaryDag !== "degraded",
+        annVectorOk: features.annVector !== "failed",
+        graphCteOk: features.graphCte !== "failed",
+        sqlFusionOk: features.sqlFusion !== "failed" && features.sqlFusion !== "degraded",
         gitExportOk: true,
         lastError: this.lastError
-      }
+      },
+      features
     };
   }
 
   summarySearchTool(params: Record<string, unknown>) {
     return this.summarySearch.search(this.config.agentId, String(params.query ?? ""), Number(params.limit ?? 10));
+  }
+
+  async retrieveTool(params: Record<string, unknown>) {
+    const query = String(params.query ?? "");
+    const mode = (params.mode === undefined ? this.config.mode : String(params.mode)) as never;
+    const policy =
+      params.evidencePolicy === undefined ? this.intentClassifier.classify(query) : (params.evidencePolicy as EvidencePolicyRequest);
+    return this.retrievalRouter.retrieve({
+      agentId: this.config.agentId,
+      query,
+      mode,
+      evidencePolicy: policy,
+      caseId: params.caseId === undefined ? undefined : String(params.caseId),
+      sessionId: params.sessionId === undefined ? undefined : String(params.sessionId),
+      requiredLane: params.requiredLane as never,
+      limit: params.limit === undefined ? undefined : Number(params.limit)
+    });
   }
 
   expandEvidenceTool(params: Record<string, unknown>) {
@@ -257,44 +342,18 @@ export class OmsOrchestrator {
     });
   }
 
-  ftsSearchTool(params: Record<string, unknown>) {
+  async ftsSearchTool(params: Record<string, unknown>) {
     const query = String(params.query ?? "");
     const policy =
       params.evidencePolicy === undefined ? this.intentClassifier.classify(query) : (params.evidencePolicy as EvidencePolicyRequest);
-    const caseId = params.caseId === undefined ? undefined : String(params.caseId);
-    if (policy === "material_evidence" && this.config.summaryEnabled) {
-      const summaryHits = this.summarySearch.search(this.config.agentId, query, Number(params.limit ?? 10));
-      const expanded = summaryHits.map((hit) => ({
-        navigationHit: hit,
-        evidencePacket: this.expander.expand({
-          summaryId: hit.summaryId,
-          query,
-          mode: "high",
-          evidencePolicy: policy,
-          caseId
-        })
-      }));
-      const delivered = expanded.find((item) => item.evidencePacket.status === "delivered");
-      if (delivered ?? expanded[0]) {
-        return {
-          hitKind: "summary_dag_expand_evidence",
-          usedModule: "summary_dag_expand_evidence",
-          rawExactSearchOnly: false,
-          ftsFallbackUsed: false,
-          note:
-            "Material-evidence queries must not answer from FTS alone. OMS found summary navigation and expanded it to an authoritative raw evidence packet.",
-          summaryNavigationHitCount: summaryHits.length,
-          selected: delivered ?? expanded[0],
-          attempted: expanded
-        };
-      }
-    }
-    return this.fts.search({
-      agentId: this.config.agentId,
+    return this.retrieveTool({
       query,
       evidencePolicy: policy,
-      caseId,
-      limit: params.limit === undefined ? undefined : Number(params.limit)
+      caseId: params.caseId,
+      sessionId: params.sessionId,
+      mode: params.mode ?? "medium",
+      requiredLane: "fts_bm25",
+      limit: params.limit
     });
   }
 
@@ -315,20 +374,22 @@ export class OmsOrchestrator {
       };
     }
     if (params.messageId) {
+      const message = this.rawMessages.byId(String(params.messageId));
       return {
         traceKind: "raw_message",
-        message: this.rawMessages.byId(String(params.messageId)),
+        message: message ? this.redactedRaw(message) : undefined,
+        note: "Raw text is redacted on message traces. Use packet-backed oms_search/oms_expand_evidence for evidence excerpts.",
         sourceEdges: this.sourceEdges.toTarget("raw_message", String(params.messageId))
       };
     }
     return { traceKind: "none", reason: "summaryId_packetId_or_messageId_required" };
   }
 
-  whyTool(params: Record<string, unknown>) {
+  async whyTool(params: Record<string, unknown>) {
     const query = String(params.query ?? "");
     const mode = params.mode ? String(params.mode) : this.config.mode;
     const intent = this.intentClassifier.classify(query);
-    const result = this.retrievalRouter.retrieve({
+    const result = await this.retrievalRouter.retrieve({
       agentId: this.config.agentId,
       query,
       mode: mode as never,
@@ -341,8 +402,14 @@ export class OmsOrchestrator {
       enabledModules: {
         summary: this.config.summaryEnabled,
         fts5: this.config.ftsEnabled,
+        trigram: this.config.trigramEnabled,
         rag: this.config.ragEnabled,
-        graph: this.config.graphEnabled
+        ann: this.config.annEnabled,
+        embeddingProvider: this.config.embeddingProvider,
+        embeddingModelConfigured: Boolean(this.config.embeddingModel),
+        embeddingApiKeyEnv: this.config.embeddingApiKeyEnv,
+        graph: this.config.graphEnabled,
+        sqlFusion: this.config.sqlFusionEnabled
       },
       intent,
       candidateCounts: JSON.stringify(result).match(/messageId|summaryId/g)?.length ?? 0,
@@ -368,7 +435,7 @@ export class OmsOrchestrator {
     if (!this.config.debug) {
       return { ok: false, reason: "debug_mode_disabled" };
     }
-    return this.rawMessages.allForAgent(this.config.agentId, Number(params.limit ?? 100));
+    return this.rawMessages.allForAgent(this.config.agentId, Number(params.limit ?? 100)).map((message) => this.redactedRaw(message));
   }
 
   createContextEngine() {
@@ -389,5 +456,38 @@ export class OmsOrchestrator {
       onSubagentEnded: (input: Record<string, unknown> = {}) => this.onSubagentEnded(input),
       dispose: () => {}
     };
+  }
+
+  private redactedRaw(message: RawMessage) {
+    return {
+      messageId: message.messageId,
+      agentId: message.agentId,
+      sessionId: message.sessionId,
+      turnId: message.turnId,
+      role: message.role,
+      eventType: message.eventType,
+      createdAt: message.createdAt,
+      sequence: message.sequence,
+      tokenCount: message.tokenCount,
+      originalHash: message.originalHash,
+      visibleToUser: message.visibleToUser,
+      interrupted: message.interrupted,
+      sourceScope: message.sourceScope,
+      sourcePurpose: message.sourcePurpose,
+      sourceAuthority: message.sourceAuthority,
+      retrievalAllowed: message.retrievalAllowed,
+      evidenceAllowed: message.evidenceAllowed,
+      evidencePolicyMask: message.evidencePolicyMask,
+      caseId: message.caseId,
+      parentMessageId: message.parentMessageId,
+      turnIndex: message.turnIndex,
+      originalText: "[redacted: use delivered evidence packet]",
+      normalizedText: "[redacted]"
+    };
+  }
+
+  private vectorRetrievalConfigured(): boolean {
+    const status = this.embeddingProvider.status();
+    return (this.config.annEnabled || this.config.ragEnabled) && status.ok && Boolean(this.embeddingProvider.model);
   }
 }

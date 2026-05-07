@@ -4,6 +4,7 @@ import { EvidencePolicy } from "./EvidencePolicy.js";
 
 function mapRaw(row: Record<string, unknown>): RawMessage {
   return {
+    rawId: String(row.message_id),
     messageId: String(row.message_id),
     agentId: String(row.agent_id),
     sessionId: String(row.session_id),
@@ -22,6 +23,7 @@ function mapRaw(row: Record<string, unknown>): RawMessage {
     sourcePurpose: row.source_purpose as RawMessage["sourcePurpose"],
     sourceAuthority: row.source_authority as RawMessage["sourceAuthority"],
     retrievalAllowed: Number(row.retrieval_allowed) === 1,
+    evidenceAllowed: Number(row.evidence_allowed ?? 1) === 1,
     evidencePolicyMask: row.evidence_policy_mask as RawMessage["evidencePolicyMask"],
     caseId: row.case_id === null ? undefined : String(row.case_id),
     parentMessageId: row.parent_message_id === null ? undefined : String(row.parent_message_id),

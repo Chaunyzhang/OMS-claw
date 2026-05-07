@@ -21,7 +21,8 @@ export class RawWriter {
           originalHash: receipt.originalHash,
           sourcePurpose: receipt.sourcePurpose,
           sourceAuthority: receipt.sourceAuthority,
-          retrievalAllowed: receipt.retrievalAllowed
+          retrievalAllowed: receipt.retrievalAllowed,
+          evidenceAllowed: receipt.evidenceAllowed
         }
       });
       return receipt;
@@ -45,6 +46,7 @@ export class RawWriter {
         sourcePurpose: input.sourcePurpose ?? "general_chat",
         sourceAuthority: input.sourceAuthority ?? "visible_transcript",
         retrievalAllowed: false,
+        evidenceAllowed: false,
         reason: "raw_write_not_confirmed"
       };
     }

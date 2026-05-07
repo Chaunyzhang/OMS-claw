@@ -10,10 +10,38 @@ function tool(name: string, description: string, parameters: Record<string, unkn
   return { name, description, parameters, execute };
 }
 
+const retrievalToolParameters = jsonSchema(
+  {
+    query: { type: "string" },
+    mode: { type: "string", enum: ["low", "medium", "high", "xhigh", "ultra"], default: "high" },
+    evidencePolicy: {
+      type: "string",
+      enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"]
+    },
+    caseId: { type: "string" },
+    sessionId: { type: "string" },
+    requiredLane: { type: "string", enum: ["fts_bm25", "trigram", "summary_dag", "ann_vector", "graph_cte"] },
+    limit: { type: "number", default: 20 }
+  },
+  ["query"]
+);
+
 function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): void {
   const tools: OpenClawToolDefinition[] = [
     tool("oms_status", "Return OMS runtime attestation, registration state, counts, and health.", jsonSchema({}), () =>
       asToolResponse(orchestrator.status())
+    ),
+    tool(
+      "oms_search",
+      "Run decoupled OMS retrieval lanes, SQL fusion, and raw-only evidence packet construction.",
+      retrievalToolParameters,
+      async (_id, params) => asToolResponse(await orchestrator.retrieveTool(params))
+    ),
+    tool(
+      "oms_retrieve",
+      "Alias for oms_search. Returns candidates plus raw-only packet; never answers from candidates.",
+      retrievalToolParameters,
+      async (_id, params) => asToolResponse(await orchestrator.retrieveTool(params))
     ),
     tool(
       "oms_timeline",
@@ -48,17 +76,19 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
     ),
     tool(
       "oms_fts_search",
-      "Fallback raw normalized text search. For material/formal evidence, summary DAG expansion is required before answering; use oms_summary_search then oms_expand_evidence first.",
+      "FTS BM25 lane retrieval through the raw-only evidence packet path. Candidates are not evidence.",
       jsonSchema({
         query: { type: "string" },
+        mode: { type: "string", enum: ["low", "medium", "high", "xhigh", "ultra"], default: "medium" },
         evidencePolicy: {
           type: "string",
           enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"]
         },
         caseId: { type: "string" },
+        sessionId: { type: "string" },
         limit: { type: "number" }
       }, ["query"]),
-      (_id, params) => asToolResponse(orchestrator.ftsSearchTool(params))
+      async (_id, params) => asToolResponse(await orchestrator.ftsSearchTool(params))
     ),
     tool(
       "oms_trace",
@@ -67,10 +97,16 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
       (_id, params) => asToolResponse(orchestrator.traceTool(params))
     ),
     tool(
+      "oms_debug_lanes",
+      "Inspect lane candidates and degradation for a query. Candidate text is not evidence.",
+      jsonSchema({ query: { type: "string" }, mode: { type: "string" }, caseId: { type: "string" } }, ["query"]),
+      async (_id, params) => asToolResponse(await orchestrator.whyTool(params))
+    ),
+    tool(
       "oms_why",
       "Explain why a query matched or failed, including blocked reasons and enabled modules.",
       jsonSchema({ query: { type: "string" }, mode: { type: "string" }, caseId: { type: "string" } }, ["query"]),
-      (_id, params) => asToolResponse(orchestrator.whyTool(params))
+      async (_id, params) => asToolResponse(await orchestrator.whyTool(params))
     ),
     tool(
       "oms_git_export",
@@ -116,6 +152,8 @@ function hasAvailableTool(availableTools: unknown, name: string): boolean {
 function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode?: string } = {}): string[] {
   const hasOmsTools =
     hasAvailableTool(params.availableTools, "oms_summary_search") ||
+    hasAvailableTool(params.availableTools, "oms_search") ||
+    hasAvailableTool(params.availableTools, "oms_retrieve") ||
     hasAvailableTool(params.availableTools, "oms_expand_evidence") ||
     hasAvailableTool(params.availableTools, "oms_fts_search");
   if (!hasOmsTools) {
@@ -125,8 +163,8 @@ function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode
   const lines = [
     "## OMS Memory Recall",
     "Before answering prior-conversation facts, dates, corrections, or formal memory tests, use OMS memory tools.",
-    "For formal tests, call oms_summary_search first with the exact question text, then call oms_expand_evidence on a summary hit before answering.",
-    "Do not answer from oms_fts_search alone in formal tests. FTS is only a fallback after summary navigation is empty, and any candidate still needs authoritative raw evidence."
+    "For formal tests, call oms_search with the exact question text in high or ultra mode before answering.",
+    "Answer only when oms_search or oms_expand_evidence returns a delivered raw evidence packet. Candidate lanes, summaries, embeddings, graph labels, and snippets are not evidence."
   ];
   if (params.citationsMode === "off") {
     lines.push("Citations are disabled: do not mention internal paths unless the user explicitly asks.");
@@ -139,54 +177,61 @@ function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode
 
 function createOmsMemoryRuntime(orchestrator: OmsOrchestrator) {
   const manager = {
-    async search(query: string, opts: { maxResults?: number; minScore?: number } = {}) {
-      const hits = orchestrator.fts.search({
-        agentId: orchestrator.config.agentId,
+    async search(query: string, opts: { maxResults?: number; minScore?: number; sessionId?: string } = {}) {
+      const result = await orchestrator.retrieveTool({
         query,
         evidencePolicy: "general_history",
+        mode: "medium",
+        requiredLane: "fts_bm25",
+        sessionId: opts.sessionId,
         limit: opts.maxResults ?? 10
       });
-      return hits.map((hit, index) => ({
+      if (!result.ok || result.packet?.status !== "delivered") {
+        return [];
+      }
+      const excerpts = result.packet.rawExcerpts;
+      return excerpts.map((excerpt, index) => ({
         source: "memory",
-        path: `oms/raw/${hit.messageId}.md`,
+        path: `oms/evidence/${result.packet?.packetId}/${excerpt.messageId}.md`,
         startLine: 1,
         endLine: 1,
-        score: Math.max(0.01, 1 - index / Math.max(1, hits.length + 1)),
-        snippet: hit.originalText
+        score: Math.max(0.01, 1 - index / Math.max(1, excerpts.length + 1)),
+        snippet: excerpt.originalText
       }));
     },
     async readFile(params: { relPath?: string; path?: string }) {
       const lookup = String(params.relPath ?? params.path ?? "");
+      const packetId = lookup.match(/pkt_[A-Za-z0-9-]+/)?.[0];
       const rawId = lookup.match(/raw_[A-Za-z0-9-]+/)?.[0];
-      if (!rawId) {
+      if (!packetId || !rawId) {
         return {
           path: lookup,
           text: "",
           disabled: true,
-          error: "OMS raw message id not found in requested path"
+          error: "OMS evidence packet id and raw message id are required"
         };
       }
-      const message = orchestrator.rawMessages.byId(rawId);
-      if (!message) {
+      const item = orchestrator.connection.db
+        .prepare("SELECT excerpt_text AS text FROM evidence_packet_items WHERE packet_id = ? AND raw_id = ?")
+        .get(packetId, rawId) as { text: string } | undefined;
+      if (!item) {
         return {
           path: lookup,
           text: "",
           disabled: true,
-          error: "OMS raw message not found"
+          error: "OMS evidence packet item not found"
         };
       }
       return {
         path: lookup,
-        text: message.originalText
+        text: item.text
       };
     },
     status() {
       return {
         backend: "builtin",
         provider: "oms",
-        model: "sqlite-fts5",
-        workspaceDir: dirname(orchestrator.config.dbPath),
-        dbPath: orchestrator.config.dbPath,
+        model: "sqlite-fts5+trigram+sqlite-canonical-vectors+graph-cte+sql-rrf",
         sources: ["memory"],
         files: orchestrator.rawMessages.count(),
         chunks: orchestrator.rawMessages.count(),
@@ -202,10 +247,18 @@ function createOmsMemoryRuntime(orchestrator: OmsOrchestrator) {
     },
     async sync() {},
     async probeEmbeddingAvailability() {
-      return { ok: true, provider: "oms", model: "sqlite-fts5" };
+      const status = orchestrator.embeddingProvider.status();
+      return {
+        ok: (orchestrator.config.annEnabled || orchestrator.config.ragEnabled) && status.ok,
+        provider: status.provider,
+        model: status.model,
+        reason: status.reason,
+        optional: true
+      };
     },
     async probeVectorAvailability() {
-      return false;
+      const status = orchestrator.embeddingProvider.status();
+      return (orchestrator.config.annEnabled || orchestrator.config.ragEnabled) && status.ok;
     },
     async close() {}
   };
@@ -219,7 +272,6 @@ function createOmsMemoryRuntime(orchestrator: OmsOrchestrator) {
         backend: "builtin",
         citations: params.cfg?.memory?.citations ?? "auto",
         oms: {
-          dbPath: orchestrator.config.dbPath,
           agentId: orchestrator.config.agentId
         }
       };
@@ -231,14 +283,17 @@ function createOmsMemoryRuntime(orchestrator: OmsOrchestrator) {
 }
 
 function listOmsPublicArtifacts(orchestrator: OmsOrchestrator) {
+  if (!orchestrator.config.memoryRepoPath) {
+    return [];
+  }
   return [
     {
-      kind: "oms-sqlite-ledger",
-      workspaceDir: dirname(orchestrator.config.dbPath),
-      relativePath: basename(orchestrator.config.dbPath),
-      absolutePath: orchestrator.config.dbPath,
+      kind: "oms-redacted-timeline-repo",
+      workspaceDir: dirname(orchestrator.config.memoryRepoPath),
+      relativePath: basename(orchestrator.config.memoryRepoPath),
+      absolutePath: orchestrator.config.memoryRepoPath,
       agentIds: [orchestrator.config.agentId],
-      contentType: "sqlite"
+      contentType: "directory"
     }
   ];
 }

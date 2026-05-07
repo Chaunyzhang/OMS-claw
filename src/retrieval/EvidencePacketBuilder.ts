@@ -4,6 +4,8 @@ import type { AuthorityReport, BuildInfo, EvidencePacket, RawMessage } from "../
 export class EvidencePacketBuilder {
   build(input: {
     build: BuildInfo;
+    queryId?: string;
+    fusionRunId?: string;
     status: EvidencePacket["status"];
     reason?: string;
     rawMessages: RawMessage[];
@@ -11,6 +13,7 @@ export class EvidencePacketBuilder {
     summaryDerivedRawCount: number;
     sourceSummaryIds: string[];
     sourceEdgeIds: string[];
+    sourceRoutes?: string[];
     authorityReport: AuthorityReport;
   }): EvidencePacket {
     const rawExcerptHash = `sha256:${createHash("sha256")
@@ -18,6 +21,8 @@ export class EvidencePacketBuilder {
       .digest("hex")}`;
     return {
       packetId: `pkt_${randomUUID()}`,
+      queryId: input.queryId,
+      fusionRunId: input.fusionRunId,
       status: input.status,
       reason: input.reason,
       selectedAuthoritativeRawCount: input.authoritativeRawMessages.length,
@@ -26,13 +31,17 @@ export class EvidencePacketBuilder {
       rawMessageIds: input.authoritativeRawMessages.map((message) => message.messageId),
       sourceSummaryIds: input.sourceSummaryIds,
       sourceEdgeIds: input.sourceEdgeIds,
+      sourceRoutes: input.sourceRoutes,
       rawExcerptHash,
       rawExcerpts: input.authoritativeRawMessages.map((message) => ({
         messageId: message.messageId,
+        sessionId: message.sessionId,
         role: message.role,
         createdAt: message.createdAt,
+        sequence: message.sequence,
         sourcePurpose: message.sourcePurpose,
         sourceAuthority: message.sourceAuthority,
+        evidenceAllowed: message.evidenceAllowed,
         turnIndex: message.turnIndex ?? -1,
         originalText: message.originalText
       })),
@@ -44,8 +53,8 @@ export class EvidencePacketBuilder {
       },
       answerInstruction:
         input.status === "delivered"
-          ? "Answer only from the included raw excerpts. Summary text is navigation, not evidence."
-          : "If this packet status is blocked or empty, do not answer from memory. Say: \"I did not find traceable raw evidence for that.\" 中文：请说：“我没有找到可回溯的原文记录。”"
+          ? "Answer only from the included raw excerpts. Summary text, embedding chunks, graph labels, and snippets are navigation only."
+          : "If this packet status is blocked or empty, do not answer from memory. Say: \"I did not find traceable raw evidence for that.\" Chinese: \"我没有找到可回溯的原文证据。\""
     };
   }
 }

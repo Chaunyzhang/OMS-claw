@@ -1,4 +1,4 @@
-export type OmsMode = "off" | "auto" | "low" | "medium" | "high" | "xhigh";
+export type OmsMode = "off" | "auto" | "low" | "medium" | "high" | "xhigh" | "ultra";
 export type RawRole = "user" | "assistant";
 export type SourcePurpose =
   | "general_chat"
@@ -9,14 +9,24 @@ export type SourcePurpose =
   | "diagnostic"
   | "visible_tool_summary"
   | "system_visible_notice"
-  | "debug_note";
+  | "debug_note"
+  | "conversation"
+  | "assistant_reply"
+  | "system_visible"
+  | "imported_timeline";
 export type SourceAuthority =
   | "visible_transcript"
   | "original_user_supplied_material"
   | "assistant_visible_final"
   | "assistant_visible_summary"
   | "diagnostic_explanation"
-  | "non_evidence_interaction";
+  | "non_evidence_interaction"
+  | "authoritative_material"
+  | "user_visible"
+  | "assistant_visible"
+  | "diagnostic_only"
+  | "replay_only"
+  | "blocked";
 export type EvidencePolicyMask =
   | "general_history"
   | "assistant_history"
@@ -49,13 +59,22 @@ export interface OmsConfig {
   contextThreshold: number;
   summaryEnabled: boolean;
   ftsEnabled: boolean;
+  trigramEnabled: boolean;
   ragEnabled: boolean;
+  annEnabled: boolean;
+  embeddingProvider: "disabled" | "local_hash" | "openrouter";
+  embeddingModel?: string;
+  embeddingApiKeyEnv?: string;
+  embeddingBaseUrl?: string;
+  embeddingDimensions?: number;
+  embeddingTimeoutMs?: number;
   graphEnabled: boolean;
+  sqlFusionEnabled: boolean;
   gitExportEnabled: boolean;
   redactionEnabled: boolean;
   debug: boolean;
   manualRetrievalDisabled: boolean;
-  manualRetrievalPath?: "summary" | "fts" | "rag" | "graph";
+  manualRetrievalPath?: "summary" | "fts" | "trigram" | "rag" | "ann" | "graph";
 }
 
 export interface RawWriteInput {
@@ -72,6 +91,7 @@ export interface RawWriteInput {
   sourcePurpose?: SourcePurpose;
   sourceAuthority?: SourceAuthority;
   retrievalAllowed?: boolean;
+  evidenceAllowed?: boolean;
   evidencePolicyMask?: EvidencePolicyMask;
   caseId?: string;
   parentMessageId?: string;
@@ -80,6 +100,7 @@ export interface RawWriteInput {
 }
 
 export interface RawMessage {
+  rawId?: string;
   messageId: string;
   agentId: string;
   sessionId: string;
@@ -98,6 +119,7 @@ export interface RawMessage {
   sourcePurpose: SourcePurpose;
   sourceAuthority: SourceAuthority;
   retrievalAllowed: boolean;
+  evidenceAllowed: boolean;
   evidencePolicyMask: EvidencePolicyMask;
   caseId?: string;
   parentMessageId?: string;
@@ -116,6 +138,7 @@ export interface RawWriteReceipt {
   sourcePurpose: SourcePurpose;
   sourceAuthority: SourceAuthority;
   retrievalAllowed: boolean;
+  evidenceAllowed: boolean;
   reason?: string;
 }
 
@@ -163,6 +186,7 @@ export interface AuthorityReport {
       | "wrong_source_purpose"
       | "wrong_source_authority"
       | "wrong_case_id"
+      | "current_question_session"
       | "assistant_storage_receipt"
       | "formal_question"
       | "diagnostic_not_allowed";
@@ -171,6 +195,8 @@ export interface AuthorityReport {
 
 export interface EvidencePacket {
   packetId: string;
+  queryId?: string;
+  fusionRunId?: string;
   status: "delivered" | "blocked" | "empty";
   reason?: string;
   selectedAuthoritativeRawCount: number;
@@ -179,13 +205,17 @@ export interface EvidencePacket {
   rawMessageIds: string[];
   sourceSummaryIds: string[];
   sourceEdgeIds: string[];
+  sourceRoutes?: string[];
   rawExcerptHash: string;
   rawExcerpts: Array<{
     messageId: string;
+    sessionId: string;
     role: RawRole;
     createdAt: string;
+    sequence: number;
     sourcePurpose: SourcePurpose;
     sourceAuthority: SourceAuthority;
+    evidenceAllowed?: boolean;
     turnIndex: number;
     originalText: string;
   }>;
@@ -198,12 +228,58 @@ export interface EvidencePacket {
   answerInstruction: string;
 }
 
+export type LaneName = "fts_bm25" | "trigram" | "summary_dag" | "ann_vector" | "graph_cte" | "timeline";
+export type LaneStatus = "ok" | "ready" | "warming" | "degraded" | "blocked" | "failed" | "unknown";
+export type TargetKind = "raw" | "summary" | "embedding_chunk" | "graph_node" | "graph_edge";
+
+export interface CandidateLaneHit {
+  targetKind: TargetKind;
+  targetId: string;
+  rawIdHint?: string;
+  summaryIdHint?: string;
+  graphPath?: unknown;
+  rank: number;
+  score: number;
+  reason: Record<string, unknown>;
+}
+
+export interface CandidateLaneResult {
+  lane: LaneName;
+  status: "ok" | "degraded" | "blocked" | "failed";
+  candidates: CandidateLaneHit[];
+  timingsMs: Record<string, number>;
+  error?: string;
+}
+
+export interface FusionCandidate {
+  rawId: string;
+  fusedRank: number;
+  fusedScore: number;
+  laneVotes: Array<{ lane: string; rank: number; weight: number }>;
+  reason?: Record<string, unknown>;
+}
+
+export interface OmsRetrieveResult {
+  ok: boolean;
+  queryId: string;
+  mode: OmsMode;
+  lanesUsed: LaneName[];
+  lanesDegraded: Array<{ lane: LaneName; status: string; error?: string }>;
+  candidateCount: number;
+  packet: EvidencePacket | null;
+  details: {
+    fusionRunId?: string;
+    timingsMs: Record<string, number>;
+    fusedCandidates?: FusionCandidate[];
+  };
+  reason?: string;
+  answerPolicy: "ready_for_openclaw" | "candidate_only" | "must_not_answer_from_candidates";
+}
+
 export interface OmsStatus {
   ok: boolean;
   agentId: string;
   mode: OmsMode;
-  dbPath: string;
-  memoryRepoPath?: string;
   build: BuildInfo;
   openclaw: {
     contextEngineRegistered: boolean;
@@ -218,14 +294,22 @@ export interface OmsStatus {
     sourceEdges: number;
     retrievalRuns: number;
     evidencePackets: number;
+    embeddingChunks: number;
+    graphNodes: number;
+    graphEdges: number;
     pendingJobs: number;
     failedJobs: number;
   };
   health: {
     rawWriteOk: boolean;
     ftsReady: boolean;
+    trigramReady: boolean;
     summaryDagOk: boolean;
+    annVectorOk: boolean;
+    graphCteOk: boolean;
+    sqlFusionOk: boolean;
     gitExportOk: boolean;
     lastError?: string;
   };
+  features?: Record<string, LaneStatus | "ready" | "degraded" | "blocked" | "failed" | "unknown">;
 }

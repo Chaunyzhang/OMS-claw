@@ -7,6 +7,7 @@ export interface RegistrationHarnessResult {
   toolNames: string[];
   contextEngineIds: string[];
   memoryCapabilityIds: string[];
+  memoryCapabilities: Array<Record<string, unknown>>;
   bootstrapStatus?: unknown;
   errors: string[];
   orchestrator?: unknown;
@@ -19,6 +20,7 @@ export function runOpenClawRegistrationHarness(input: {
   const toolNames: string[] = [];
   const contextFactories = new Map<string, () => Record<string, unknown>>();
   const memoryCapabilityIds: string[] = [];
+  const memoryCapabilities: Array<Record<string, unknown>> = [];
   const errors: string[] = [];
   let orchestrator: unknown;
 
@@ -37,6 +39,7 @@ export function runOpenClawRegistrationHarness(input: {
     },
     registerMemoryCapability(capability: Record<string, unknown>) {
       memoryCapabilityIds.push(String(capability.id ?? "unknown"));
+      memoryCapabilities.push(capability);
     }
   };
 
@@ -57,6 +60,8 @@ export function runOpenClawRegistrationHarness(input: {
 
   const requiredTools = [
     "oms_status",
+    "oms_search",
+    "oms_retrieve",
     "oms_timeline",
     "oms_summary_search",
     "oms_expand_evidence",
@@ -77,6 +82,7 @@ export function runOpenClawRegistrationHarness(input: {
     toolNames,
     contextEngineIds: Array.from(contextFactories.keys()),
     memoryCapabilityIds,
+    memoryCapabilities,
     bootstrapStatus,
     errors,
     orchestrator

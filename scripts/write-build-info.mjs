@@ -9,11 +9,14 @@ const packageJson = JSON.parse(readFileSync(resolve(root, "package.json"), "utf8
 const snapshotPath = resolve(root, "src/generated/build-info.snapshot.json");
 const toolNames = [
   "oms_status",
+  "oms_search",
+  "oms_retrieve",
   "oms_timeline",
   "oms_summary_search",
   "oms_expand_evidence",
   "oms_fts_search",
   "oms_trace",
+  "oms_debug_lanes",
   "oms_why",
   "oms_git_export",
   "oms_debug_raw"

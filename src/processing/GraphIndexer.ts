@@ -1,5 +1,1 @@
-export class GraphIndexer {
-  candidates(): Array<Record<string, unknown>> {
-    return [];
-  }
-}
+export { GraphBuilder as GraphIndexer } from "./GraphBuilder.js";
