@@ -38,6 +38,7 @@
     "test": "node --experimental-sqlite ./node_modules/vitest/vitest.mjs run",
     "check": "npm run build && npm run test",
     "doctor": "node --experimental-sqlite dist/scripts/doctor.js",
+    "graph": "node --experimental-sqlite dist/scripts/graph.js",
     "case-pack": "node dist/scripts/build-case-pack.js",
     "real-send": "node --experimental-sqlite dist/scripts/openclaw-send-one.js",
     "runtime-report": "node --experimental-sqlite dist/scripts/runtime-report.js",

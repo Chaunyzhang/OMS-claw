@@ -77,4 +77,8 @@ export class SourceEdgeStore {
   count(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM source_edges").get() as { count: number }).count);
   }
+
+  countForAgent(agentId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM source_edges WHERE agent_id = ?").get(agentId) as { count: number }).count);
+  }
 }

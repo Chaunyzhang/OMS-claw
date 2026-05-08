@@ -240,6 +240,25 @@ export class RawMessageStore {
       .map((row) => mapRaw(row as Record<string, unknown>));
   }
 
+  allForAgentAfterSequence(agentId: string, afterSequence: number, limit = 5000): RawMessage[] {
+    return this.db
+      .prepare(
+        `SELECT rm.*, t.turn_index
+         FROM raw_messages rm
+         LEFT JOIN turns t ON t.turn_id = rm.turn_id
+         WHERE rm.agent_id = ?
+           AND rm.sequence > ?
+         ORDER BY rm.sequence ASC
+         LIMIT ?`
+      )
+      .all(agentId, afterSequence, limit)
+      .map((row) => mapRaw(row as Record<string, unknown>));
+  }
+
+  countForAgent(agentId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM raw_messages WHERE agent_id = ?").get(agentId) as { count: number }).count);
+  }
+
   count(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM raw_messages").get() as { count: number }).count);
   }
@@ -323,9 +342,9 @@ export class RawMessageStore {
            VALUES (?, ?, ?, ?, ?, ?)`
         )
         .run(input.rowId, input.messageId, input.agentId, input.sessionId, input.role, input.normalizedText);
-      this.markFeature("ftsBm25", "ready");
+      this.markFeature(input.agentId, "ftsBm25", "ready");
     } catch (error) {
-      this.markFeature("ftsBm25", "degraded", error);
+      this.markFeature(input.agentId, "ftsBm25", "degraded", error);
     }
 
     try {
@@ -335,25 +354,26 @@ export class RawMessageStore {
            VALUES (?, ?, ?, ?, ?)`
         )
         .run(input.rowId, input.messageId, input.agentId, input.sessionId, input.normalizedText);
-      this.markFeature("trigram", "ready");
+      this.markFeature(input.agentId, "trigram", "ready");
     } catch (error) {
-      this.markFeature("trigram", "degraded", error);
+      this.markFeature(input.agentId, "trigram", "degraded", error);
     }
   }
 
-  private markFeature(feature: string, status: string, error?: unknown): void {
+  private markFeature(agentId: string, feature: string, status: string, error?: unknown): void {
     try {
       this.db
         .prepare(
-          `INSERT INTO feature_health (feature, status, last_ok_at, last_error_at, last_error, metadata_json)
-           VALUES (?, ?, ?, ?, ?, '{}')
-           ON CONFLICT(feature) DO UPDATE SET
+          `INSERT INTO feature_health (agent_id, feature, status, last_ok_at, last_error_at, last_error, metadata_json)
+           VALUES (?, ?, ?, ?, ?, ?, '{}')
+           ON CONFLICT(agent_id, feature) DO UPDATE SET
              status=excluded.status,
              last_ok_at=COALESCE(excluded.last_ok_at, feature_health.last_ok_at),
              last_error_at=COALESCE(excluded.last_error_at, feature_health.last_error_at),
              last_error=excluded.last_error`
         )
         .run(
+          agentId,
           feature,
           status,
           error === undefined ? new Date().toISOString() : null,

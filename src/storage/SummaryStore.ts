@@ -111,6 +111,10 @@ export class SummaryStore {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM summaries").get() as { count: number }).count);
   }
 
+  countForAgent(agentId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM summaries WHERE agent_id = ?").get(agentId) as { count: number }).count);
+  }
+
   static hashSources(parts: string[]): string {
     return `sha256:${createHash("sha256").update(parts.join("\n"), "utf8").digest("hex")}`;
   }

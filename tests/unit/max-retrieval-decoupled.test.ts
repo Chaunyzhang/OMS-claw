@@ -9,9 +9,105 @@ import { OmsOrchestrator } from "../../src/core/OmsOrchestrator.js";
 import { SQLiteConnection } from "../../src/storage/SQLiteConnection.js";
 import { runOpenClawRegistrationHarness } from "../../src/adapter/OpenClawRegistrationHarness.js";
 import { localEmbedding } from "../../src/storage/EmbeddingStore.js";
+import { graphStatus } from "../../src/scripts/graph.js";
 
 function createOms(extra: Record<string, unknown> = {}) {
   return new OmsOrchestrator(createDefaultConfig({ agentId: `agent-${randomUUID()}`, dbPath: ":memory:", ...extra }));
+}
+
+function seedStatusRecords(oms: OmsOrchestrator, count: number) {
+  for (let index = 1; index <= count; index += 1) {
+    const receipt = oms.rawWriter.write({
+      agentId: oms.config.agentId,
+      sessionId: `status-session-${index}`,
+      turnIndex: index,
+      role: "user",
+      sourcePurpose: "general_chat",
+      originalText: `Status Agent ${oms.config.agentId} uses Tool ${index}.`
+    });
+    const raw = oms.rawMessages.byId(receipt.messageId);
+    if (!raw) {
+      throw new Error("raw_write_not_confirmed");
+    }
+    const summary = oms.summaries.create({
+      agentId: oms.config.agentId,
+      sessionId: raw.sessionId,
+      level: 0,
+      nodeKind: "leaf",
+      summaryText: `Summary ${index}`,
+      sourceHash: raw.originalHash,
+      sourceMessageCount: 1
+    });
+    const edge = oms.sourceEdges.create({
+      agentId: oms.config.agentId,
+      sourceKind: "raw_message",
+      sourceId: raw.messageId,
+      targetKind: "summary",
+      targetId: summary.summaryId,
+      relation: "summarizes",
+      sourceHash: raw.originalHash
+    });
+    oms.embeddings.indexRaw(raw);
+    const left = oms.graph.upsertEntity({ agentId: oms.config.agentId, entityType: "entity", label: `Status ${index}` });
+    const right = oms.graph.upsertEntity({ agentId: oms.config.agentId, entityType: "entity", label: `Tool ${index}` });
+    oms.graph.upsertRelation({
+      agentId: oms.config.agentId,
+      fromEntityId: left,
+      toEntityId: right,
+      relationType: "USES",
+      confidence: 0.8
+    });
+    const runId = oms.retrievalRuns.createRun({
+      agentId: oms.config.agentId,
+      sessionId: raw.sessionId,
+      query: `status ${index}`,
+      mode: "medium",
+      intent: "general_history",
+      status: "candidate",
+      config: oms.config,
+      build: oms.build()
+    });
+    oms.retrievalRuns.recordPacket(runId, oms.config.agentId, {
+      packetId: `pkt_${oms.config.agentId}_${index}`,
+      status: "delivered",
+      selectedAuthoritativeRawCount: 1,
+      selectedRawCount: 1,
+      summaryDerivedRawCount: 0,
+      rawMessageIds: [raw.messageId],
+      sourceSummaryIds: [summary.summaryId],
+      sourceEdgeIds: [edge.edgeId],
+      sourceRoutes: ["fts_bm25"],
+      rawExcerptHash: raw.originalHash,
+      rawExcerpts: [
+        {
+          messageId: raw.messageId,
+          sessionId: raw.sessionId,
+          role: raw.role,
+          createdAt: raw.createdAt,
+          sequence: raw.sequence,
+          sourcePurpose: raw.sourcePurpose,
+          sourceAuthority: raw.sourceAuthority,
+          evidenceAllowed: raw.evidenceAllowed,
+          turnIndex: raw.turnIndex ?? index,
+          originalText: raw.originalText
+        }
+      ],
+      authorityReport: {
+        ok: true,
+        expectedPolicy: "general_history",
+        totalRawCount: 1,
+        authoritativeRawCount: 1,
+        blockedRawCount: 0,
+        blockedReasons: []
+      },
+      deliveryReceipt: {
+        deliveredToOpenClaw: false,
+        deliveredAt: new Date().toISOString(),
+        build: oms.build()
+      },
+      answerInstruction: "test"
+    });
+  }
 }
 
 async function seedMelanieMaterial(oms: OmsOrchestrator) {
@@ -55,6 +151,9 @@ describe("SQLite max retrieval decoupled architecture", () => {
     expect(tables).toContain("raw_trigram");
     expect(tables).toContain("embedding_chunks");
     expect(tables).toContain("graph_nodes");
+    expect(tables).toContain("graph_entities");
+    expect(tables).toContain("graph_relations");
+    expect(tables).toContain("graph_relation_occurrences");
     expect(tables).toContain("fusion_runs");
     expect(tables).toContain("evidence_packet_items");
     connection.close();
@@ -314,29 +413,26 @@ describe("SQLite max retrieval decoupled architecture", () => {
 
   it("fails closed when graph paths do not resolve to authoritative raw", async () => {
     const oms = createOms();
-    const nodeA = "gn_orphan_a";
-    const nodeB = "gn_orphan_b";
-    oms.connection.db
-      .prepare(
-        `INSERT INTO graph_nodes
-          (node_id, agent_id, node_type, label, canonical_label, confidence, status, metadata_json)
-         VALUES (?, ?, 'entity', 'Melanie', 'melanie', 0.9, 'active', '{}')`
-      )
-      .run(nodeA, oms.config.agentId);
-    oms.connection.db
-      .prepare(
-        `INSERT INTO graph_nodes
-          (node_id, agent_id, node_type, label, canonical_label, confidence, status, metadata_json)
-         VALUES (?, ?, 'entity', 'sunrise', 'sunrise', 0.9, 'active', '{}')`
-      )
-      .run(nodeB, oms.config.agentId);
-    oms.connection.db
-      .prepare(
-        `INSERT INTO graph_edges
-          (edge_id, agent_id, from_node_id, to_node_id, relation, weight, confidence, source_raw_id, created_at, status, metadata_json)
-         VALUES ('ge_orphan', ?, ?, ?, 'co_mentions', 1, 0.9, 'raw_missing', ?, 'active', '{}')`
-      )
-      .run(oms.config.agentId, nodeA, nodeB, new Date().toISOString());
+    const nodeA = oms.graph.upsertEntity({ agentId: oms.config.agentId, entityType: "entity", label: "Melanie", confidence: 0.9 });
+    const nodeB = oms.graph.upsertEntity({ agentId: oms.config.agentId, entityType: "entity", label: "sunrise", confidence: 0.9 });
+    const relationId = oms.graph.upsertRelation({
+      agentId: oms.config.agentId,
+      fromEntityId: nodeA,
+      toEntityId: nodeB,
+      relationType: "CO_OCCURS_WITH",
+      directionality: "undirected",
+      confidence: 0.9
+    });
+    oms.graph.insertRelationOccurrence({
+      agentId: oms.config.agentId,
+      relationId,
+      rawId: "raw_missing",
+      extractor: "test",
+      extractorVersion: "test",
+      ruleId: "orphan",
+      evidenceTextHash: "sha256:missing",
+      confidence: 0.9
+    });
 
     const result = await oms.retrieveTool({
       query: "Melanie sunrise",
@@ -350,6 +446,118 @@ describe("SQLite max retrieval decoupled architecture", () => {
     expect(result.answerPolicy).toBe("must_not_answer_from_candidates");
     expect(result.packet.status).toBe("blocked");
     expect(result.packet.selectedAuthoritativeRawCount).toBe(0);
+    oms.connection.close();
+  });
+
+  it("does not build graph data inside the graph search lane", async () => {
+    const oms = createOms();
+    oms.ingest({
+      sessionId: "s1",
+      turnId: "t1",
+      turnIndex: 1,
+      messages: [{ role: "user", content: "Melanie uses OpenClaw." }]
+    });
+
+    const result = await oms.retrieveTool({
+      query: "Melanie OpenClaw",
+      mode: "ultra",
+      requiredLane: "graph_cte"
+    });
+
+    expect(result.ok).toBe(false);
+    expect(result.candidateCount).toBe(0);
+    expect(oms.graph.countNodes(oms.config.agentId)).toBe(0);
+    expect(oms.graph.countEdges(oms.config.agentId)).toBe(0);
+    oms.connection.close();
+  });
+
+  it("keeps feature health scoped per agent", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oms-feature-health-"));
+    const dbPath = join(dir, "oms.sqlite");
+    const agentA = new OmsOrchestrator(createDefaultConfig({ agentId: "agent-a", dbPath }));
+    const agentB = new OmsOrchestrator(createDefaultConfig({ agentId: "agent-b", dbPath }));
+
+    try {
+      agentA.featureHealth.mark("graphCte", "failed", {}, new Error("agent-a graph failed"));
+      agentB.featureHealth.mark("graphCte", "ready");
+      agentA.featureHealth.mark("ftsBm25", "failed", {}, new Error("agent-a fts failed"));
+      agentA.rawWriter.write({
+        agentId: "agent-a",
+        sessionId: "feature-session",
+        turnIndex: 1,
+        role: "user",
+        originalText: "Feature health should recover on raw write."
+      });
+
+      expect(agentA.status().features?.graphCte).toBe("failed");
+      expect(agentB.status().features?.graphCte).toBe("ready");
+      expect(agentA.status().features?.ftsBm25).toBe("ready");
+    } finally {
+      agentA.connection.close();
+      agentB.connection.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports status counts scoped per agent in a shared database", () => {
+    const dir = mkdtempSync(join(tmpdir(), "oms-status-scope-"));
+    const dbPath = join(dir, "oms.sqlite");
+
+    try {
+      const agentA = new OmsOrchestrator(createDefaultConfig({ agentId: "agent-a", dbPath }));
+      seedStatusRecords(agentA, 1);
+      agentA.connection.close();
+
+      const agentB = new OmsOrchestrator(createDefaultConfig({ agentId: "agent-b", dbPath }));
+      seedStatusRecords(agentB, 2);
+      const statusB = agentB.status();
+      agentB.connection.close();
+
+      const agentARead = new OmsOrchestrator(createDefaultConfig({ agentId: "agent-a", dbPath }));
+      const statusA = agentARead.status();
+      agentARead.connection.close();
+
+      expect(statusA.counts.rawMessages).toBe(1);
+      expect(statusA.counts.summaries).toBe(1);
+      expect(statusA.counts.sourceEdges).toBe(1);
+      expect(statusA.counts.retrievalRuns).toBe(1);
+      expect(statusA.counts.evidencePackets).toBe(1);
+      expect(statusA.counts.embeddingChunks).toBe(1);
+      expect(statusA.counts.graphNodes).toBe(2);
+      expect(statusA.counts.graphEdges).toBe(1);
+
+      expect(statusB.counts.rawMessages).toBe(2);
+      expect(statusB.counts.summaries).toBe(2);
+      expect(statusB.counts.sourceEdges).toBe(2);
+      expect(statusB.counts.retrievalRuns).toBe(2);
+      expect(statusB.counts.evidencePackets).toBe(2);
+      expect(statusB.counts.embeddingChunks).toBe(2);
+      expect(statusB.counts.graphNodes).toBe(4);
+      expect(statusB.counts.graphEdges).toBe(2);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("reports graph status for the selected agent only", () => {
+    const oms = createOms({ agentId: "graph-status-agent" });
+    oms.ingest({
+      sessionId: "s1",
+      turnId: "t1",
+      turnIndex: 1,
+      messages: [{ role: "user", content: "OMS uses OpenClaw." }]
+    });
+    oms.graphBuilder.rebuildAgent(oms.config.agentId);
+
+    const status = graphStatus(oms);
+
+    expect(status.agentId).toBe("graph-status-agent");
+    expect(status.graphableRawMessages).toBe(1);
+    expect(status.graphEntities).toBe(2);
+    expect(status.graphRelations).toBe(1);
+    expect(status.duplicateRelations).toBe(0);
+    expect(status.duplicateOccurrences).toBe(0);
+    expect((status.lastBuildRun as { status: string }).status).toBe("succeeded");
     oms.connection.close();
   });
 

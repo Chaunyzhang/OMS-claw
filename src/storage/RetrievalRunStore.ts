@@ -129,8 +129,16 @@ export class RetrievalRunStore {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM retrieval_runs").get() as { count: number }).count);
   }
 
+  countRunsForAgent(agentId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM retrieval_runs WHERE agent_id = ?").get(agentId) as { count: number }).count);
+  }
+
   countPackets(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM evidence_packets").get() as { count: number }).count);
+  }
+
+  countPacketsForAgent(agentId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM evidence_packets WHERE agent_id = ?").get(agentId) as { count: number }).count);
   }
 
   traceForPacket(packetId: string): Record<string, unknown> | undefined {

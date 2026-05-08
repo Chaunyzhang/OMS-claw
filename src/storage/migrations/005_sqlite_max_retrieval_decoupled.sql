@@ -16,12 +16,14 @@ CREATE TABLE IF NOT EXISTS oms_manifest (
 );
 
 CREATE TABLE IF NOT EXISTS feature_health (
-  feature TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL DEFAULT '',
+  feature TEXT NOT NULL,
   status TEXT NOT NULL,
   last_ok_at TEXT,
   last_error_at TEXT,
   last_error TEXT,
-  metadata_json TEXT NOT NULL DEFAULT '{}'
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  PRIMARY KEY(agent_id, feature)
 );
 
 CREATE VIRTUAL TABLE IF NOT EXISTS raw_trigram
@@ -45,7 +47,8 @@ CREATE TABLE IF NOT EXISTS embedding_chunks (
   dim INTEGER NOT NULL,
   created_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
-  metadata_json TEXT NOT NULL DEFAULT '{}'
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  FOREIGN KEY(raw_id) REFERENCES raw_messages(message_id)
 );
 
 CREATE TABLE IF NOT EXISTS embedding_vectors (
@@ -55,7 +58,8 @@ CREATE TABLE IF NOT EXISTS embedding_vectors (
   dim INTEGER NOT NULL,
   vector_f32 BLOB NOT NULL,
   vector_hash TEXT NOT NULL,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  FOREIGN KEY(chunk_id) REFERENCES embedding_chunks(chunk_id)
 );
 
 CREATE TABLE IF NOT EXISTS graph_nodes (
@@ -83,6 +87,95 @@ CREATE TABLE IF NOT EXISTS graph_edges (
   source_summary_id TEXT,
   created_at TEXT NOT NULL,
   status TEXT NOT NULL DEFAULT 'active',
+  metadata_json TEXT NOT NULL DEFAULT '{}'
+);
+
+CREATE TABLE IF NOT EXISTS graph_entities (
+  entity_id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  entity_type TEXT NOT NULL,
+  canonical_label TEXT NOT NULL,
+  display_label TEXT NOT NULL,
+  aliases_json TEXT NOT NULL DEFAULT '[]',
+  description TEXT,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  mention_count INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(agent_id, entity_type, canonical_label)
+);
+
+CREATE TABLE IF NOT EXISTS graph_entity_mentions (
+  mention_id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  entity_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  turn_id TEXT,
+  text_unit_id TEXT,
+  extractor TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  start_char INTEGER,
+  end_char INTEGER,
+  mention_text TEXT NOT NULL,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(agent_id, entity_id, raw_id, extractor, start_char, end_char)
+);
+
+CREATE TABLE IF NOT EXISTS graph_relations (
+  relation_id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  from_entity_id TEXT NOT NULL,
+  to_entity_id TEXT NOT NULL,
+  relation_type TEXT NOT NULL,
+  directionality TEXT NOT NULL DEFAULT 'directed',
+  description TEXT,
+  weight REAL NOT NULL DEFAULT 1.0,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  occurrence_count INTEGER NOT NULL DEFAULT 0,
+  first_seen_at TEXT NOT NULL,
+  last_seen_at TEXT NOT NULL,
+  status TEXT NOT NULL DEFAULT 'active',
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(agent_id, from_entity_id, to_entity_id, relation_type)
+);
+
+CREATE TABLE IF NOT EXISTS graph_relation_occurrences (
+  occurrence_id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  relation_id TEXT NOT NULL,
+  raw_id TEXT NOT NULL,
+  turn_id TEXT,
+  text_unit_id TEXT,
+  extractor TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  rule_id TEXT,
+  evidence_text_hash TEXT,
+  start_char INTEGER,
+  end_char INTEGER,
+  strength REAL NOT NULL DEFAULT 1.0,
+  confidence REAL NOT NULL DEFAULT 0.5,
+  created_at TEXT NOT NULL,
+  metadata_json TEXT NOT NULL DEFAULT '{}',
+  UNIQUE(agent_id, relation_id, raw_id, extractor, rule_id, evidence_text_hash)
+);
+
+CREATE TABLE IF NOT EXISTS graph_build_runs (
+  run_id TEXT PRIMARY KEY,
+  agent_id TEXT NOT NULL,
+  extractor_version TEXT NOT NULL,
+  started_at TEXT NOT NULL,
+  finished_at TEXT,
+  high_watermark_sequence INTEGER,
+  raw_scanned INTEGER NOT NULL DEFAULT 0,
+  entities_upserted INTEGER NOT NULL DEFAULT 0,
+  relations_upserted INTEGER NOT NULL DEFAULT 0,
+  occurrences_inserted INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL,
+  error TEXT,
   metadata_json TEXT NOT NULL DEFAULT '{}'
 );
 
@@ -175,3 +268,18 @@ CREATE TABLE IF NOT EXISTS oms_events (
   correlation_id TEXT,
   payload_json TEXT NOT NULL DEFAULT '{}'
 );
+
+CREATE INDEX IF NOT EXISTS idx_embedding_raw ON embedding_chunks(agent_id, raw_id, model);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON graph_edges(agent_id, from_node_id, relation);
+CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON graph_edges(agent_id, to_node_id, relation);
+CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(agent_id, canonical_label);
+CREATE INDEX IF NOT EXISTS idx_graph_entities_label ON graph_entities(agent_id, canonical_label);
+CREATE INDEX IF NOT EXISTS idx_graph_entity_mentions_entity ON graph_entity_mentions(agent_id, entity_id);
+CREATE INDEX IF NOT EXISTS idx_graph_entity_mentions_raw ON graph_entity_mentions(agent_id, raw_id);
+CREATE INDEX IF NOT EXISTS idx_graph_relations_from ON graph_relations(agent_id, from_entity_id, relation_type);
+CREATE INDEX IF NOT EXISTS idx_graph_relations_to ON graph_relations(agent_id, to_entity_id, relation_type);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_occurrences_relation ON graph_relation_occurrences(agent_id, relation_id);
+CREATE INDEX IF NOT EXISTS idx_graph_relation_occurrences_raw ON graph_relation_occurrences(agent_id, raw_id);
+CREATE INDEX IF NOT EXISTS idx_graph_build_runs_agent ON graph_build_runs(agent_id, extractor_version, started_at);
+CREATE INDEX IF NOT EXISTS idx_jobs_ready ON jobs(status, available_at, priority);
+CREATE INDEX IF NOT EXISTS idx_events_agent_time ON oms_events(agent_id, created_at DESC);

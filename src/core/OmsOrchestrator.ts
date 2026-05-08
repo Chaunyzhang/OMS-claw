@@ -95,7 +95,7 @@ export class OmsOrchestrator {
     this.sourceEdges = new SourceEdgeStore(this.connection.db);
     this.retrievalRuns = new RetrievalRunStore(this.connection.db);
     this.laneStore = new CandidateLaneStore(this.connection.db);
-    this.featureHealth = new FeatureHealthRegistry(this.connection.db);
+    this.featureHealth = new FeatureHealthRegistry(this.connection.db, config.agentId);
     this.embeddings = new EmbeddingStore(this.connection.db);
     this.embeddingProvider = createEmbeddingProvider(config);
     this.graph = new GraphStore(this.connection.db);
@@ -125,7 +125,7 @@ export class OmsOrchestrator {
       new TrigramLane(this.connection.db),
       new SummaryDagLane(this.summarySearch, this.sourceEdges, this.rawMessages),
       new AnnVectorLane(config, this.embeddingBuilder, this.embeddings, this.embeddingProvider),
-      new GraphCteLane(this.connection.db, this.graphBuilder, this.graph),
+      new GraphCteLane(this.connection.db, this.graph),
       new SQLRRFusion(this.connection.db)
     );
   }
@@ -244,7 +244,7 @@ export class OmsOrchestrator {
         id: `graph:${sessionId}:${Date.now()}`,
         kind: "graph_extract",
         run: () => {
-          this.graphBuilder.buildForAgent(this.config.agentId);
+          this.graphBuilder.buildIncremental(this.config.agentId);
         }
       });
     }
@@ -281,14 +281,14 @@ export class OmsOrchestrator {
       build: this.build(),
       openclaw: this.registration,
       counts: {
-        rawMessages: this.rawMessages.count(),
-        summaries: this.summaries.count(),
-        sourceEdges: this.sourceEdges.count(),
-        retrievalRuns: this.retrievalRuns.countRuns(),
-        evidencePackets: this.retrievalRuns.countPackets(),
-        embeddingChunks: this.embeddings.count(),
-        graphNodes: this.graph.countNodes(),
-        graphEdges: this.graph.countEdges(),
+        rawMessages: this.rawMessages.countForAgent(this.config.agentId),
+        summaries: this.summaries.countForAgent(this.config.agentId),
+        sourceEdges: this.sourceEdges.countForAgent(this.config.agentId),
+        retrievalRuns: this.retrievalRuns.countRunsForAgent(this.config.agentId),
+        evidencePackets: this.retrievalRuns.countPacketsForAgent(this.config.agentId),
+        embeddingChunks: this.embeddings.countForAgent(this.config.agentId),
+        graphNodes: this.graph.countNodes(this.config.agentId),
+        graphEdges: this.graph.countEdges(this.config.agentId),
         pendingJobs: queueCounts.pendingJobs,
         failedJobs: queueCounts.failedJobs
       },

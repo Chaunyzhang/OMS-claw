@@ -133,6 +133,10 @@ export class EmbeddingStore {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM embedding_chunks").get() as { count: number }).count);
   }
 
+  countForAgent(agentId: string): number {
+    return Number((this.db.prepare("SELECT COUNT(*) AS count FROM embedding_chunks WHERE agent_id = ?").get(agentId) as { count: number }).count);
+  }
+
   private chunkId(raw: RawMessage, model: string): string {
     return `emb_${raw.messageId}_${model.replace(/[^A-Za-z0-9_]/gu, "_")}`;
   }

@@ -200,12 +200,14 @@ const MAX_RETRIEVAL_SCHEMA = {
   );
 
   CREATE TABLE IF NOT EXISTS feature_health (
-    feature TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL DEFAULT '',
+    feature TEXT NOT NULL,
     status TEXT NOT NULL,
     last_ok_at TEXT,
     last_error_at TEXT,
     last_error TEXT,
-    metadata_json TEXT NOT NULL DEFAULT '{}'
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    PRIMARY KEY(agent_id, feature)
   );
 
   CREATE TABLE IF NOT EXISTS embedding_chunks (
@@ -257,6 +259,91 @@ const MAX_RETRIEVAL_SCHEMA = {
     source_summary_id TEXT,
     created_at TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'active',
+    metadata_json TEXT NOT NULL DEFAULT '{}'
+  );
+
+  CREATE TABLE IF NOT EXISTS graph_entities (
+    entity_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    entity_type TEXT NOT NULL,
+    canonical_label TEXT NOT NULL,
+    display_label TEXT NOT NULL,
+    aliases_json TEXT NOT NULL DEFAULT '[]',
+    description TEXT,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    mention_count INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(agent_id, entity_type, canonical_label)
+  );
+  CREATE TABLE IF NOT EXISTS graph_entity_mentions (
+    mention_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    entity_id TEXT NOT NULL,
+    raw_id TEXT NOT NULL,
+    turn_id TEXT,
+    text_unit_id TEXT,
+    extractor TEXT NOT NULL,
+    extractor_version TEXT NOT NULL,
+    start_char INTEGER,
+    end_char INTEGER,
+    mention_text TEXT NOT NULL,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    created_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(agent_id, entity_id, raw_id, extractor, start_char, end_char)
+  );
+  CREATE TABLE IF NOT EXISTS graph_relations (
+    relation_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    from_entity_id TEXT NOT NULL,
+    to_entity_id TEXT NOT NULL,
+    relation_type TEXT NOT NULL,
+    directionality TEXT NOT NULL DEFAULT 'directed',
+    description TEXT,
+    weight REAL NOT NULL DEFAULT 1.0,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    occurrence_count INTEGER NOT NULL DEFAULT 0,
+    first_seen_at TEXT NOT NULL,
+    last_seen_at TEXT NOT NULL,
+    status TEXT NOT NULL DEFAULT 'active',
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(agent_id, from_entity_id, to_entity_id, relation_type)
+  );
+  CREATE TABLE IF NOT EXISTS graph_relation_occurrences (
+    occurrence_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    relation_id TEXT NOT NULL,
+    raw_id TEXT NOT NULL,
+    turn_id TEXT,
+    text_unit_id TEXT,
+    extractor TEXT NOT NULL,
+    extractor_version TEXT NOT NULL,
+    rule_id TEXT,
+    evidence_text_hash TEXT,
+    start_char INTEGER,
+    end_char INTEGER,
+    strength REAL NOT NULL DEFAULT 1.0,
+    confidence REAL NOT NULL DEFAULT 0.5,
+    created_at TEXT NOT NULL,
+    metadata_json TEXT NOT NULL DEFAULT '{}',
+    UNIQUE(agent_id, relation_id, raw_id, extractor, rule_id, evidence_text_hash)
+  );
+  CREATE TABLE IF NOT EXISTS graph_build_runs (
+    run_id TEXT PRIMARY KEY,
+    agent_id TEXT NOT NULL,
+    extractor_version TEXT NOT NULL,
+    started_at TEXT NOT NULL,
+    finished_at TEXT,
+    high_watermark_sequence INTEGER,
+    raw_scanned INTEGER NOT NULL DEFAULT 0,
+    entities_upserted INTEGER NOT NULL DEFAULT 0,
+    relations_upserted INTEGER NOT NULL DEFAULT 0,
+    occurrences_inserted INTEGER NOT NULL DEFAULT 0,
+    status TEXT NOT NULL,
+    error TEXT,
     metadata_json TEXT NOT NULL DEFAULT '{}'
   );
 
@@ -372,6 +459,7 @@ export class SQLiteConnection {
     this.extendRawMessages();
     this.extendRetrievalTables();
     this.db.exec(MAX_RETRIEVAL_SCHEMA.sql);
+    this.ensureAgentScopedFeatureHealth();
     this.extendMaxRetrievalTables();
     this.recordMigration(MAX_RETRIEVAL_SCHEMA);
     this.ensureTrigramTable();
@@ -413,6 +501,44 @@ export class SQLiteConnection {
     if (!this.columnExists(table, column)) {
       this.db.exec(`ALTER TABLE ${table} ADD COLUMN ${ddl};`);
     }
+  }
+
+  private ensureAgentScopedFeatureHealth(): void {
+    const columns = this.db.prepare("PRAGMA table_info(feature_health)").all() as Array<{ name: string; pk: number }>;
+    const primaryKey = columns
+      .filter((column) => column.pk > 0)
+      .sort((left, right) => left.pk - right.pk)
+      .map((column) => column.name)
+      .join(",");
+    if (columns.some((column) => column.name === "agent_id") && primaryKey === "agent_id,feature") {
+      return;
+    }
+
+    const hasAgentId = columns.some((column) => column.name === "agent_id");
+    this.db.exec(`
+      DROP TABLE IF EXISTS feature_health_legacy_rebuild;
+      ALTER TABLE feature_health RENAME TO feature_health_legacy_rebuild;
+      CREATE TABLE feature_health (
+        agent_id TEXT NOT NULL DEFAULT '',
+        feature TEXT NOT NULL,
+        status TEXT NOT NULL,
+        last_ok_at TEXT,
+        last_error_at TEXT,
+        last_error TEXT,
+        metadata_json TEXT NOT NULL DEFAULT '{}',
+        PRIMARY KEY(agent_id, feature)
+      );
+    `);
+    this.db
+      .prepare(
+        `INSERT OR REPLACE INTO feature_health
+          (agent_id, feature, status, last_ok_at, last_error_at, last_error, metadata_json)
+         SELECT ${hasAgentId ? "COALESCE(agent_id, '')" : "''"},
+                feature, status, last_ok_at, last_error_at, last_error, metadata_json
+         FROM feature_health_legacy_rebuild`
+      )
+      .run();
+    this.db.exec("DROP TABLE feature_health_legacy_rebuild;");
   }
 
   private extendRawMessages(): void {
@@ -495,6 +621,14 @@ export class SQLiteConnection {
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_edges_from ON graph_edges(agent_id, from_node_id, relation);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_edges_to ON graph_edges(agent_id, to_node_id, relation);`);
     this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_nodes_label ON graph_nodes(agent_id, canonical_label);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_entities_label ON graph_entities(agent_id, canonical_label);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_entity_mentions_entity ON graph_entity_mentions(agent_id, entity_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_entity_mentions_raw ON graph_entity_mentions(agent_id, raw_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_relations_from ON graph_relations(agent_id, from_entity_id, relation_type);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_relations_to ON graph_relations(agent_id, to_entity_id, relation_type);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_relation_occurrences_relation ON graph_relation_occurrences(agent_id, relation_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_relation_occurrences_raw ON graph_relation_occurrences(agent_id, raw_id);`);
+    this.db.exec(`CREATE INDEX IF NOT EXISTS idx_graph_build_runs_agent ON graph_build_runs(agent_id, extractor_version, started_at);`);
   }
 
   private ensureTrigramTable(): void {
@@ -522,9 +656,9 @@ export class SQLiteConnection {
   private markFeature(feature: string, status: string, error?: unknown): void {
     this.db
       .prepare(
-        `INSERT INTO feature_health (feature, status, last_ok_at, last_error_at, last_error, metadata_json)
-         VALUES (?, ?, ?, ?, ?, '{}')
-         ON CONFLICT(feature) DO UPDATE SET
+          `INSERT INTO feature_health (agent_id, feature, status, last_ok_at, last_error_at, last_error, metadata_json)
+         VALUES ('', ?, ?, ?, ?, ?, '{}')
+         ON CONFLICT(agent_id, feature) DO UPDATE SET
            status=excluded.status,
            last_ok_at=COALESCE(excluded.last_ok_at, feature_health.last_ok_at),
            last_error_at=COALESCE(excluded.last_error_at, feature_health.last_error_at),
