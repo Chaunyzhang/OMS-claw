@@ -116,23 +116,17 @@ describe("poison tests", () => {
       role: "user",
       content: "password: hunter2 token=aaaaaaaaaaaaaaaaaaaaaaaa"
     });
-    const rawId = ingest.receipts[0].messageId;
-    const raw = oms.rawMessages.byId(rawId);
 
-    expect(raw?.retrievalAllowed).toBe(false);
-    expect(raw?.evidenceAllowed).toBe(false);
+    expect(ingest.ok).toBe(true);
+    expect(ingest.receipts).toHaveLength(0);
+    expect(oms.status().counts.rawMessages).toBe(0);
 
     const fts = await oms.ftsSearchTool({ query: "hunter2", evidencePolicy: "general_history" });
     expect(fts.ok).toBe(false);
     expect(fts.candidateCount).toBe(0);
 
-    const direct = oms.expandEvidenceTool({ rawMessageId: rawId, mode: "high", evidencePolicy: "general_history" });
-    expect(direct.status).toBe("blocked");
-    expect(direct.authorityReport.blockedReasons).toEqual(
-      expect.arrayContaining([expect.objectContaining({ reason: "secret_detected" })])
-    );
-
     await oms.afterTurn({ sessionId: "secret-session", turnId: "secret-turn" });
+    expect(oms.summaries.count()).toBe(0);
     expect(JSON.stringify(oms.summarySearchTool({ query: "hunter2" }))).not.toContain("hunter2");
     expect(oms.assemble({ sessionId: "secret-session" }).systemPromptAddition).not.toContain("hunter2");
     oms.connection.close();
@@ -180,12 +174,12 @@ describe("poison tests", () => {
   it("blocks git export when redaction scan fails", () => {
     const memoryRepo = mkdtempSync(join(tmpdir(), "oms-memory-"));
     const oms = createOms({ memoryRepoPath: memoryRepo });
-    oms.ingest({
+    oms.rawWriter.write({
       sessionId: "s1",
       turnId: "t1",
       turnIndex: 1,
       role: "user",
-      content: "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
+      originalText: "-----BEGIN PRIVATE KEY-----\nsecret\n-----END PRIVATE KEY-----"
     });
     const result = oms.gitExportTool();
     expect(result.ok).toBe(false);

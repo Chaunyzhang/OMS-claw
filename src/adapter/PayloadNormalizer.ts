@@ -80,7 +80,12 @@ export class PayloadNormalizer {
         turnIndex: value.turnIndex === undefined ? defaults.turnIndex : finiteTurnIndex(value.turnIndex),
         role: role as RawRole,
         text,
-        eventType: value.eventType === undefined ? undefined : String(value.eventType),
+        eventType:
+          value.eventType === undefined
+            ? value.type === undefined
+              ? undefined
+              : String(value.type)
+            : String(value.eventType),
         createdAt: value.createdAt === undefined ? undefined : String(value.createdAt),
         interrupted: value.interrupted === true,
         metadata: { source: "openclaw_payload" }

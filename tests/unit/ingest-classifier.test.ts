@@ -31,17 +31,14 @@ describe("ingest classification", () => {
     expect(result?.originalText).not.toContain("OMS_CAPTURE");
   });
 
-  it("blocks retrieval and evidence when secrets are detected", () => {
+  it("drops detected secrets before raw write", () => {
     const result = new IngestClassifier().classify({
       sessionId: "s1",
       role: "user",
       text: "password: hunter2 token=aaaaaaaaaaaaaaaaaaaaaaaa"
     });
 
-    expect(result?.retrievalAllowed).toBe(false);
-    expect(result?.evidenceAllowed).toBe(false);
-    expect(result?.evidencePolicyMask).toBe("never_evidence");
-    expect(result?.metadata?.secretScan).toMatchObject({ ok: false, reason: "secret_detected" });
+    expect(result).toBeUndefined();
   });
 
   it("keeps assistant storage receipts out of evidence", () => {
@@ -56,6 +53,16 @@ describe("ingest classification", () => {
     expect(result.retrievalAllowed).toBe(false);
   });
 
+  it("drops assistant storage receipts before raw write", () => {
+    const result = new IngestClassifier().classify({
+      sessionId: "s1",
+      role: "assistant",
+      text: "Chunk stored. I'll recall it when needed."
+    });
+
+    expect(result).toBeUndefined();
+  });
+
   it("keeps formal questions out of material evidence", () => {
     const result = new SourcePurposeClassifier().classify({
       role: "user",
@@ -65,5 +72,26 @@ describe("ingest classification", () => {
     expect(result.sourcePurpose).toBe("formal_question");
     expect(result.evidencePolicyMask).toBe("debug_only");
     expect(result.retrievalAllowed).toBe(false);
+  });
+
+  it("drops formal questions before raw write", () => {
+    const result = new IngestClassifier().classify({
+      sessionId: "s1",
+      role: "user",
+      text: "Before answering, call OMS memory tools. Question: When?"
+    });
+
+    expect(result).toBeUndefined();
+  });
+
+  it("drops tool results before raw write", () => {
+    const result = new IngestClassifier().classify({
+      sessionId: "s1",
+      role: "assistant",
+      eventType: "tool_result",
+      text: "tool output that should not become memory"
+    });
+
+    expect(result).toBeUndefined();
   });
 });

@@ -1,4 +1,4 @@
-import type { RawRole, RawWriteInput } from "../types.js";
+import type { RawRole, RawWriteInput, SourcePurpose } from "../types.js";
 import { SecretScanner } from "./SecretScanner.js";
 import { SourcePurposeClassifier } from "./SourcePurposeClassifier.js";
 import { VisibilityGate } from "./VisibilityGate.js";
@@ -14,6 +14,8 @@ export interface IngestCandidate {
   interrupted?: boolean;
   metadata?: Record<string, unknown>;
 }
+
+const RAW_MEMORY_SOURCE_PURPOSES = new Set<SourcePurpose>(["general_chat", "assistant_final_answer", "material_corpus"]);
 
 export class IngestClassifier {
   private readonly visibility = new VisibilityGate();
@@ -32,6 +34,9 @@ export class IngestClassifier {
     const originalText = classification.materialText ?? candidate.text;
     const secretScan = this.secretScanner.scan(originalText);
     const secretDetected = secretScan.detected.length > 0;
+    if (secretDetected || !classification.retrievalAllowed || !RAW_MEMORY_SOURCE_PURPOSES.has(classification.sourcePurpose)) {
+      return undefined;
+    }
     return {
       sessionId: candidate.sessionId,
       turnId: candidate.turnId,
@@ -43,9 +48,9 @@ export class IngestClassifier {
       sourceScope: classification.sourceScope,
       sourcePurpose: classification.sourcePurpose,
       sourceAuthority: classification.sourceAuthority,
-      retrievalAllowed: secretDetected ? false : classification.retrievalAllowed,
-      evidenceAllowed: secretDetected ? false : undefined,
-      evidencePolicyMask: secretDetected ? "never_evidence" : classification.evidencePolicyMask,
+      retrievalAllowed: classification.retrievalAllowed,
+      evidenceAllowed: undefined,
+      evidencePolicyMask: classification.evidencePolicyMask,
       caseId: classification.caseId,
       interrupted: candidate.interrupted,
       metadata: {
