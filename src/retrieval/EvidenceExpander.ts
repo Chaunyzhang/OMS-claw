@@ -73,8 +73,8 @@ export class EvidenceExpander {
 
     const uniqueCandidates = this.unique(candidates).slice(0, args.maxRawMessages ?? 20);
     const expandedCandidates = this.expandWindows(uniqueCandidates, args.windowTurns ?? 0);
-    const authorityReport = this.policy.verify(expandedCandidates, evidencePolicy, args.caseId, args.sessionId);
-    const authoritative = this.policy.filter(expandedCandidates, evidencePolicy, args.caseId, args.sessionId);
+    const authorityReport = this.policy.verify(expandedCandidates, evidencePolicy, args.caseId);
+    const authoritative = this.policy.filter(expandedCandidates, evidencePolicy, args.caseId);
     const mustFailClosed = mode === "high" || mode === "xhigh" || mode === "ultra" || evidencePolicy === "material_evidence";
     const status: EvidencePacket["status"] =
       authoritative.length > 0 ? "delivered" : mustFailClosed ? "blocked" : expandedCandidates.length > 0 ? "empty" : "empty";

@@ -188,11 +188,10 @@ export interface AuthorityReport {
     messageId: string;
     reason:
       | "retrieval_not_allowed"
-      | "wrong_source_purpose"
-      | "wrong_source_authority"
-      | "wrong_case_id"
-      | "current_question_session"
-      | "assistant_storage_receipt"
+        | "wrong_source_purpose"
+        | "wrong_source_authority"
+        | "wrong_case_id"
+        | "assistant_storage_receipt"
       | "formal_question"
       | "diagnostic_not_allowed"
       | "secret_detected";

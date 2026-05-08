@@ -609,11 +609,9 @@ describe("SQLite max retrieval decoupled architecture", () => {
       caseId: "demo-001",
       sessionId: "material-session"
     });
-    expect(sameSession.ok).toBe(false);
-    expect(sameSession.packet.status).toBe("blocked");
-    expect(sameSession.packet.authorityReport.blockedReasons).toEqual(
-      expect.arrayContaining([expect.objectContaining({ reason: "current_question_session" })])
-    );
+    expect(sameSession.ok).toBe(true);
+    expect(sameSession.packet.status).toBe("delivered");
+    expect(sameSession.packet.rawExcerpts[0].sessionId).toBe("material-session");
 
     const wrongCase = await oms.ftsSearchTool({
       query: "Melanie sunrise",

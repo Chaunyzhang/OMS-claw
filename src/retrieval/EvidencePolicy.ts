@@ -5,12 +5,11 @@ export class EvidencePolicy {
   verify(
     rawMessages: RawMessage[],
     expectedPolicy: EvidencePolicyRequest,
-    caseId?: string,
-    currentQuestionSessionId?: string
+    caseId?: string
   ): AuthorityReport {
     const blockedReasons: AuthorityReport["blockedReasons"] = [];
     const authoritative = rawMessages.filter((message) => {
-      const reason = this.blockReason(message, expectedPolicy, caseId, currentQuestionSessionId);
+      const reason = this.blockReason(message, expectedPolicy, caseId);
       if (reason) {
         blockedReasons.push({ messageId: message.messageId, reason });
         return false;
@@ -27,15 +26,14 @@ export class EvidencePolicy {
     };
   }
 
-  filter(rawMessages: RawMessage[], expectedPolicy: EvidencePolicyRequest, caseId?: string, currentQuestionSessionId?: string): RawMessage[] {
-    return rawMessages.filter((message) => this.blockReason(message, expectedPolicy, caseId, currentQuestionSessionId) === undefined);
+  filter(rawMessages: RawMessage[], expectedPolicy: EvidencePolicyRequest, caseId?: string): RawMessage[] {
+    return rawMessages.filter((message) => this.blockReason(message, expectedPolicy, caseId) === undefined);
   }
 
   private blockReason(
     message: RawMessage,
     expectedPolicy: EvidencePolicyRequest,
-    caseId?: string,
-    currentQuestionSessionId?: string
+    caseId?: string
   ): AuthorityReport["blockedReasons"][number]["reason"] | undefined {
     if (hasDetectedSecrets(message.metadata)) {
       return "secret_detected";
@@ -45,9 +43,6 @@ export class EvidencePolicy {
     }
     if (message.evidenceAllowed === false) {
       return "wrong_source_purpose";
-    }
-    if (currentQuestionSessionId && message.sessionId === currentQuestionSessionId) {
-      return "current_question_session";
     }
     if (caseId && message.caseId !== caseId) {
       return "wrong_case_id";
