@@ -38,7 +38,7 @@ export class EvidenceExpander {
 
   expand(args: ExpandEvidenceArgs): EvidencePacket {
     const mode = args.mode ?? "high";
-    const evidencePolicy = args.evidencePolicy ?? (mode === "high" || mode === "xhigh" || mode === "ultra" ? "material_evidence" : "general_history");
+    const evidencePolicy = args.evidencePolicy ?? (args.caseId ? "material_evidence" : "general_history");
     const sourceSummaryIds = new Set<string>();
     const sourceEdgeIds = new Set<string>();
     let candidates: RawMessage[] = [];

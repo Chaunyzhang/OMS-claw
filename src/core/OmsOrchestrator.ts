@@ -336,14 +336,14 @@ export class OmsOrchestrator {
   async retrieveTool(params: Record<string, unknown>) {
     const query = String(params.query ?? "");
     const mode = (params.mode === undefined ? this.config.mode : String(params.mode)) as never;
-    const policy =
-      params.evidencePolicy === undefined ? this.intentClassifier.classify(query) : (params.evidencePolicy as EvidencePolicyRequest);
+    const caseId = params.caseId === undefined ? undefined : String(params.caseId);
+    const policy = this.evidencePolicyFor(query, params.evidencePolicy, caseId);
     return this.retrievalRouter.retrieve({
       agentId: this.config.agentId,
       query,
       mode,
       evidencePolicy: policy,
-      caseId: params.caseId === undefined ? undefined : String(params.caseId),
+      caseId,
       sessionId: params.sessionId === undefined ? undefined : String(params.sessionId),
       requiredLane: params.requiredLane as never,
       limit: params.limit === undefined ? undefined : Number(params.limit)
@@ -366,12 +366,12 @@ export class OmsOrchestrator {
 
   async ftsSearchTool(params: Record<string, unknown>) {
     const query = String(params.query ?? "");
-    const policy =
-      params.evidencePolicy === undefined ? this.intentClassifier.classify(query) : (params.evidencePolicy as EvidencePolicyRequest);
+    const caseId = params.caseId === undefined ? undefined : String(params.caseId);
+    const policy = this.evidencePolicyFor(query, params.evidencePolicy, caseId);
     return this.retrieveTool({
       query,
       evidencePolicy: policy,
-      caseId: params.caseId,
+      caseId,
       sessionId: params.sessionId,
       mode: params.mode ?? "medium",
       requiredLane: "fts_bm25",
@@ -410,13 +410,14 @@ export class OmsOrchestrator {
   async whyTool(params: Record<string, unknown>) {
     const query = String(params.query ?? "");
     const mode = params.mode ? String(params.mode) : this.config.mode;
-    const intent = this.intentClassifier.classify(query);
+    const caseId = params.caseId === undefined ? undefined : String(params.caseId);
+    const intent = this.evidencePolicyFor(query, params.evidencePolicy, caseId);
     const result = await this.retrievalRouter.retrieve({
       agentId: this.config.agentId,
       query,
       mode: mode as never,
       evidencePolicy: intent,
-      caseId: params.caseId === undefined ? undefined : String(params.caseId)
+      caseId
     });
     return {
       queryTerms: query.split(/\s+/u).filter(Boolean),
@@ -511,5 +512,12 @@ export class OmsOrchestrator {
   private vectorRetrievalConfigured(): boolean {
     const status = this.embeddingProvider.status();
     return (this.config.annEnabled || this.config.ragEnabled) && status.ok && Boolean(this.embeddingProvider.model);
+  }
+
+  private evidencePolicyFor(query: string, requested: unknown, caseId?: string): EvidencePolicyRequest {
+    if (requested !== undefined) {
+      return requested as EvidencePolicyRequest;
+    }
+    return caseId ? "material_evidence" : this.intentClassifier.classify(query);
   }
 }

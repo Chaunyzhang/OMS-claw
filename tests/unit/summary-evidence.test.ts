@@ -165,6 +165,30 @@ describe("summary DAG and evidence expansion", () => {
     oms.connection.close();
   });
 
+  it("expands ordinary chat raw in high mode as general history by default", () => {
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "ordinary-expand-agent",
+        dbPath: ":memory:",
+        graphEnabled: false
+      })
+    );
+
+    const ingest = oms.ingest({
+      sessionId: "s1",
+      turnId: "t1",
+      turnIndex: 1,
+      role: "user",
+      content: "The first ordinary chat message should expand as general history."
+    });
+    const packet = oms.expandEvidenceTool({ rawMessageId: ingest.receipts[0].messageId, mode: "high" });
+
+    expect(packet.status).toBe("delivered");
+    expect(packet.authorityReport.expectedPolicy).toBe("general_history");
+    expect(packet.rawExcerpts[0].sourcePurpose).toBe("general_chat");
+    oms.connection.close();
+  });
+
   it("ranks summary navigation with the same material evidence policy used by expansion", async () => {
     const oms = new OmsOrchestrator(
       createDefaultConfig({

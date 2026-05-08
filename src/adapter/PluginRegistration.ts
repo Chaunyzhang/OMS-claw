@@ -43,15 +43,19 @@ function registerTool(api: OpenClawPluginApi, definition: OpenClawToolDefinition
   api.registerTool?.(() => exposed, { names: [definition.name], name: definition.name });
 }
 
+const evidencePolicyDescription =
+  "Policy selector. Use general_history for ordinary prior conversation and timeline recall. Use assistant_history only when the user asks what the assistant previously said or promised. Use material_evidence only for OMS_CAPTURE/material_corpus/case-pack evidence, usually with caseId. Use diagnostic_history only for debugging prior OMS failures.";
+
 const retrievalToolParameters = jsonSchema(
   {
     query: { type: "string" },
     mode: { type: "string", enum: ["low", "medium", "high", "xhigh", "ultra"], default: "high" },
     evidencePolicy: {
       type: "string",
-      enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"]
+      enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"],
+      description: evidencePolicyDescription
     },
-    caseId: { type: "string" },
+    caseId: { type: "string", description: "Only use with material_evidence for OMS_CAPTURE/material_corpus case packs." },
     sessionId: { type: "string" },
     requiredLane: { type: "string", enum: ["fts_bm25", "trigram", "summary_dag", "ann_vector", "graph_cte"] },
     limit: { type: "number", default: 20 }
@@ -98,9 +102,10 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
         mode: { type: "string", enum: ["low", "medium", "high", "xhigh"] },
         evidencePolicy: {
           type: "string",
-          enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"]
+          enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"],
+          description: evidencePolicyDescription
         },
-        caseId: { type: "string" },
+        caseId: { type: "string", description: "Only use with material_evidence for OMS_CAPTURE/material_corpus case packs." },
         windowTurns: { type: "number" },
         maxRawMessages: { type: "number" },
         sessionId: { type: "string" }
@@ -115,9 +120,10 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
         mode: { type: "string", enum: ["low", "medium", "high", "xhigh", "ultra"], default: "medium" },
         evidencePolicy: {
           type: "string",
-          enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"]
+          enum: ["general_history", "assistant_history", "material_evidence", "diagnostic_history"],
+          description: evidencePolicyDescription
         },
-        caseId: { type: "string" },
+        caseId: { type: "string", description: "Only use with material_evidence for OMS_CAPTURE/material_corpus case packs." },
         sessionId: { type: "string" },
         limit: { type: "number" }
       }, ["query"]),
@@ -254,6 +260,8 @@ function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode
     "## OMS Memory Recall",
     "Before answering prior-conversation facts, dates, corrections, or formal memory tests, use OMS memory tools.",
     "For formal tests, call oms_search with the exact question text in high or ultra mode before answering.",
+    "Evidence policy: use general_history for ordinary prior conversation, including first/last messages and formal memory tests over chat history. Use material_evidence only for OMS_CAPTURE/material_corpus/case-pack evidence and include caseId when known. Use assistant_history only for what the assistant previously said or promised. Use diagnostic_history only for debugging prior OMS failures.",
+    "Do not use material_evidence for ordinary chat just because the user says formal test, benchmark, or first messages. When expanding known messageIds or summaryIds from normal chat, pass evidencePolicy=general_history even in high/ultra mode.",
     "Answer only when oms_search or oms_expand_evidence returns a delivered raw evidence packet. Candidate lanes, summaries, embeddings, graph labels, and snippets are not evidence."
   ];
   if (params.citationsMode === "off") {
