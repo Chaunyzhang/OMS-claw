@@ -4,7 +4,14 @@ import { OmsOrchestrator } from "../../src/core/OmsOrchestrator.js";
 
 describe("summary DAG and evidence expansion", () => {
   it("returns navigation hits that must expand to raw original text", async () => {
-    const oms = new OmsOrchestrator(createDefaultConfig({ agentId: "agent", dbPath: ":memory:" }));
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "agent",
+        dbPath: ":memory:",
+        summaryFreshRawMessages: 0,
+        summaryLeafChunkTokens: 1
+      })
+    );
     const ingest = oms.ingest({
       sessionId: "s1",
       turnId: "t1",
@@ -36,12 +43,14 @@ describe("summary DAG and evidence expansion", () => {
     oms.connection.close();
   });
 
-  it("does not create duplicate leaf summaries for the same raw turn", async () => {
+  it("does not create duplicate chunk leaf summaries for already summarized raw", async () => {
     const oms = new OmsOrchestrator(
       createDefaultConfig({
         agentId: "summary-dedupe-agent",
         dbPath: ":memory:",
-        graphEnabled: false
+        graphEnabled: false,
+        summaryFreshRawMessages: 0,
+        summaryLeafChunkTokens: 1
       })
     );
 
@@ -49,23 +58,28 @@ describe("summary DAG and evidence expansion", () => {
       sessionId: "s1",
       turnId: "t1",
       turnIndex: 1,
-      messages: [
-        { role: "user", content: "Remember: OMS summaries should dedupe by source hash." },
-        { role: "assistant", content: "Stored." }
-      ]
+      role: "user",
+      content: "Remember: OMS summaries should not summarize the same raw twice."
     });
 
     const first = await oms.afterTurn({ sessionId: "s1", turnId: "t1" });
     const second = await oms.afterTurn({ sessionId: "s1", turnId: "t1" });
 
     expect(first.summarized).toBe(true);
-    expect(second.summarized).toBe(true);
+    expect(second.summarized).toBe(false);
     expect(oms.summaries.count()).toBe(1);
     oms.connection.close();
   });
 
   it("uses the host turn id when afterTurn ingests hook messages", async () => {
-    const oms = new OmsOrchestrator(createDefaultConfig({ agentId: "after-turn-agent", dbPath: ":memory:" }));
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "after-turn-agent",
+        dbPath: ":memory:",
+        summaryFreshRawMessages: 0,
+        summaryLeafChunkTokens: 1
+      })
+    );
 
     const result = await oms.afterTurn({
       sessionId: "hook-session",
@@ -83,8 +97,83 @@ describe("summary DAG and evidence expansion", () => {
     oms.connection.close();
   });
 
+  it("keeps fresh raw messages unsummarized until they age past the tail", async () => {
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "fresh-tail-agent",
+        dbPath: ":memory:",
+        graphEnabled: false,
+        summaryFreshRawMessages: 2,
+        summaryLeafChunkTokens: 4
+      })
+    );
+
+    for (let index = 1; index <= 3; index += 1) {
+      oms.ingest({
+        sessionId: "s1",
+        turnId: `t${index}`,
+        turnIndex: index,
+        messages: [{ role: "user", content: `Durable topic ${index} with enough words.` }]
+      });
+      await oms.afterTurn({ sessionId: "s1", turnId: `t${index}` });
+    }
+
+    expect(oms.summaries.count()).toBe(1);
+    const summary = oms.summarySearchTool({ query: "Durable topic 1" })[0];
+    const packet = oms.expandEvidenceTool({ summaryId: summary.summaryId, evidencePolicy: "general_history", mode: "medium" });
+
+    expect(packet.rawMessageIds).toHaveLength(1);
+    expect(packet.rawExcerpts[0].originalText).toContain("Durable topic 1");
+    oms.connection.close();
+  });
+
+  it("rolls up active leaf summaries and keeps raw evidence reachable", async () => {
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "rollup-agent",
+        dbPath: ":memory:",
+        graphEnabled: false,
+        summaryFreshRawMessages: 0,
+        summaryLeafChunkTokens: 4,
+        summaryLeafRollupMinFanout: 2,
+        summaryIncrementalMaxDepth: 1
+      })
+    );
+
+    for (let index = 1; index <= 2; index += 1) {
+      oms.ingest({
+        sessionId: "s1",
+        turnId: `t${index}`,
+        turnIndex: index,
+        messages: [{ role: "user", content: `Rollup source ${index} mentions lake sunrise.` }]
+      });
+      await oms.afterTurn({ sessionId: "s1", turnId: `t${index}` });
+    }
+
+    const activeRollups = oms.summaries.activeForSessionLevel({ agentId: oms.config.agentId, sessionId: "s1", level: 1 });
+    const activeLeaves = oms.summaries.activeForSessionLevel({ agentId: oms.config.agentId, sessionId: "s1", level: 0 });
+    const packet = oms.expandEvidenceTool({
+      summaryId: activeRollups[0].summaryId,
+      evidencePolicy: "general_history",
+      mode: "medium"
+    });
+
+    expect(activeRollups).toHaveLength(1);
+    expect(activeLeaves).toHaveLength(0);
+    expect(packet.status).toBe("delivered");
+    expect(packet.rawMessageIds).toHaveLength(2);
+    oms.connection.close();
+  });
+
   it("ranks summary navigation with the same material evidence policy used by expansion", async () => {
-    const oms = new OmsOrchestrator(createDefaultConfig({ agentId: "summary-policy-agent", dbPath: ":memory:" }));
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "summary-policy-agent",
+        dbPath: ":memory:",
+        summaryFreshRawMessages: 0,
+        summaryLeafChunkTokens: 1
+      })
+    );
 
     oms.rawWriter.write({
       sessionId: "valid",
@@ -96,7 +185,7 @@ describe("summary DAG and evidence expansion", () => {
       evidencePolicyMask: "material_evidence",
       originalText: "ranked sunrise valid evidence"
     });
-    oms.summaryDag.buildLeafForTurn({ agentId: oms.config.agentId, sessionId: "valid", turnId: "valid-turn" });
+    oms.summaryDag.buildLeafForSession({ agentId: oms.config.agentId, sessionId: "valid", force: true });
 
     oms.rawWriter.write({
       sessionId: "invalid",
@@ -108,7 +197,7 @@ describe("summary DAG and evidence expansion", () => {
       evidencePolicyMask: "general_history",
       originalText: "ranked sunrise extra invalid evidence"
     });
-    oms.summaryDag.buildLeafForTurn({ agentId: oms.config.agentId, sessionId: "invalid", turnId: "invalid-turn" });
+    oms.summaryDag.buildLeafForSession({ agentId: oms.config.agentId, sessionId: "invalid", force: true });
 
     const hits = oms.summarySearchTool({ query: "ranked sunrise extra", limit: 2 });
     const packet = oms.expandEvidenceTool({

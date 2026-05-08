@@ -37,6 +37,26 @@ describe("config resolver", () => {
     }
   });
 
+  it("defaults summary compaction to lossless-style chunk thresholds", () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "oms-summary-config-"));
+
+    try {
+      const config = createDefaultConfig({
+        baseDir,
+        openclawConfigPath: join(baseDir, "missing-openclaw.json"),
+        agentId: "agent-a"
+      });
+
+      expect(config.summaryFreshRawMessages).toBe(64);
+      expect(config.summaryLeafChunkTokens).toBe(20000);
+      expect(config.summaryLeafRollupMinFanout).toBe(8);
+      expect(config.summaryRollupMinFanout).toBe(4);
+      expect(config.summaryIncrementalMaxDepth).toBe(1);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
   it("fails closed when a multi-agent OpenClaw config lacks explicit OMS agentId", () => {
     const baseDir = mkdtempSync(join(tmpdir(), "oms-agent-paths-"));
     const openclawConfigPath = join(baseDir, "openclaw.json");

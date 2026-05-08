@@ -6,7 +6,15 @@ import { createDefaultConfig } from "../../src/core/ConfigResolver.js";
 import { OmsOrchestrator } from "../../src/core/OmsOrchestrator.js";
 
 function createOms(extra: Record<string, unknown> = {}) {
-  return new OmsOrchestrator(createDefaultConfig({ agentId: `agent-${crypto.randomUUID()}`, dbPath: ":memory:", ...extra }));
+  return new OmsOrchestrator(
+    createDefaultConfig({
+      agentId: `agent-${crypto.randomUUID()}`,
+      dbPath: ":memory:",
+      summaryFreshRawMessages: 0,
+      summaryLeafChunkTokens: 1,
+      ...extra
+    })
+  );
 }
 
 describe("poison tests", () => {

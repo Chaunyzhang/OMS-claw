@@ -22,7 +22,9 @@ describe("minimal runnable acceptance scenario", () => {
         agentId: "accept-agent",
         dbPath: ":memory:",
         memoryRepoPath: memoryRepo,
-        debug: true
+        debug: true,
+        summaryFreshRawMessages: 0,
+        summaryLeafChunkTokens: 1
       }
     });
     expect(harness.ok).toBe(true);

@@ -48,6 +48,16 @@ function asMode(value: unknown): OmsMode {
     : "auto";
 }
 
+function positiveInteger(value: unknown, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) && number > 0 ? Math.floor(number) : fallback;
+}
+
+function nonNegativeInteger(value: unknown, fallback: number): number {
+  const number = Number(value);
+  return Number.isFinite(number) && number >= 0 ? Math.floor(number) : fallback;
+}
+
 export function createDefaultConfig(input: Record<string, unknown> = {}): OmsConfig {
   const baseDir = resolve(String(input.baseDir ?? join(homedir(), ".openclaw", "oms")));
   mkdirSync(baseDir, { recursive: true });
@@ -71,6 +81,11 @@ export function createDefaultConfig(input: Record<string, unknown> = {}): OmsCon
     recentCompleteTurns: Number(input.recentCompleteTurns ?? 5),
     contextThreshold: Number(input.contextThreshold ?? 0.75),
     summaryEnabled: input.summaryEnabled !== false,
+    summaryFreshRawMessages: nonNegativeInteger(input.summaryFreshRawMessages ?? input.freshTailCount, 64),
+    summaryLeafChunkTokens: positiveInteger(input.summaryLeafChunkTokens ?? input.leafChunkTokens, 20000),
+    summaryLeafRollupMinFanout: positiveInteger(input.summaryLeafRollupMinFanout ?? input.leafMinFanout, 8),
+    summaryRollupMinFanout: positiveInteger(input.summaryRollupMinFanout ?? input.condensedMinFanout, 4),
+    summaryIncrementalMaxDepth: nonNegativeInteger(input.summaryIncrementalMaxDepth ?? input.incrementalMaxDepth, 1),
     ftsEnabled: input.ftsEnabled !== false,
     trigramEnabled: input.trigramEnabled !== false,
     ragEnabled: input.ragEnabled === true,

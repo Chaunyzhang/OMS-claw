@@ -106,7 +106,7 @@ export class OmsOrchestrator {
       config.agentId,
       config.gitExportEnabled && config.memoryRepoPath ? new GitMdWriter(config.memoryRepoPath) : undefined
     );
-    this.summaryDag = new SummaryDagBuilder(this.summaries, this.sourceEdges, this.rawMessages, this.events);
+    this.summaryDag = new SummaryDagBuilder(this.summaries, this.sourceEdges, this.rawMessages, this.events, config);
     this.embeddingBuilder = new EmbeddingBuilder(this.rawMessages, this.embeddings, this.embeddingProvider);
     this.graphBuilder = new GraphBuilder(this.rawMessages, this.graph);
     this.fts = new FtsSearch(this.connection.db);
@@ -230,12 +230,21 @@ export class OmsOrchestrator {
       };
     }
 
-    for (const turnId of turnIds) {
+    let summaryResult:
+      | {
+          summarized: boolean;
+          leaf?: unknown;
+          rollups: unknown[];
+          reason?: string;
+          rawTokensOutsideTail: number;
+        }
+      | undefined;
+    if (this.config.summaryEnabled) {
       await this.queue.enqueue({
-        id: `summary:${turnId}`,
-        kind: "leaf_summary",
+        id: `summary_compaction:${sessionId}`,
+        kind: "summary_compaction",
         run: () => {
-          this.summaryDag.buildLeafForTurn({ agentId: this.config.agentId, sessionId, turnId });
+          summaryResult = this.summaryDag.compactSession({ agentId: this.config.agentId, sessionId });
         }
       });
     }
@@ -255,7 +264,13 @@ export class OmsOrchestrator {
         }
       });
     }
-    return { ok: ingestResult?.ok ?? true, summarized: true, turnIds, receipts: ingestResult?.receipts ?? [] };
+    return {
+      ok: ingestResult?.ok ?? true,
+      summarized: summaryResult?.summarized ?? false,
+      turnIds,
+      receipts: ingestResult?.receipts ?? [],
+      summary: summaryResult
+    };
   }
 
   prepareSubagentSpawn(input: Record<string, unknown> = {}) {

@@ -58,6 +58,11 @@ export interface OmsConfig {
   recentCompleteTurns: number;
   contextThreshold: number;
   summaryEnabled: boolean;
+  summaryFreshRawMessages: number;
+  summaryLeafChunkTokens: number;
+  summaryLeafRollupMinFanout: number;
+  summaryRollupMinFanout: number;
+  summaryIncrementalMaxDepth: number;
   ftsEnabled: boolean;
   trigramEnabled: boolean;
   ragEnabled: boolean;

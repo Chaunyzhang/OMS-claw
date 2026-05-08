@@ -107,6 +107,31 @@ export class SummaryStore {
       .map((item) => item.summary);
   }
 
+  activeForSessionLevel(input: { agentId: string; sessionId?: string; level: number; limit?: number }): SummaryRecord[] {
+    const rows = this.db
+      .prepare(
+        `SELECT * FROM summaries
+         WHERE agent_id = ?
+           AND status = 'active'
+           AND level = ?
+           AND (? IS NULL OR session_id = ?)
+         ORDER BY created_at ASC`
+      )
+      .all(input.agentId, input.level, input.sessionId ?? null, input.sessionId ?? null) as Array<Record<string, unknown>>;
+    return rows.slice(0, input.limit ?? rows.length).map(mapSummary);
+  }
+
+  markInactive(summaryIds: string[]): void {
+    const uniqueIds = Array.from(new Set(summaryIds)).filter(Boolean);
+    if (uniqueIds.length === 0) {
+      return;
+    }
+    const update = this.db.prepare("UPDATE summaries SET status = 'inactive' WHERE summary_id = ?");
+    for (const summaryId of uniqueIds) {
+      update.run(summaryId);
+    }
+  }
+
   count(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM summaries").get() as { count: number }).count);
   }

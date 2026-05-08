@@ -12,7 +12,15 @@ import { localEmbedding } from "../../src/storage/EmbeddingStore.js";
 import { graphStatus } from "../../src/scripts/graph.js";
 
 function createOms(extra: Record<string, unknown> = {}) {
-  return new OmsOrchestrator(createDefaultConfig({ agentId: `agent-${randomUUID()}`, dbPath: ":memory:", ...extra }));
+  return new OmsOrchestrator(
+    createDefaultConfig({
+      agentId: `agent-${randomUUID()}`,
+      dbPath: ":memory:",
+      summaryFreshRawMessages: 0,
+      summaryLeafChunkTokens: 1,
+      ...extra
+    })
+  );
 }
 
 function seedStatusRecords(oms: OmsOrchestrator, count: number) {
