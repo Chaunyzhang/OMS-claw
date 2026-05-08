@@ -10,6 +10,39 @@ function tool(name: string, description: string, parameters: Record<string, unkn
   return { name, description, parameters, execute };
 }
 
+function asRecord(value: unknown): Record<string, unknown> {
+  return value && typeof value === "object" ? (value as Record<string, unknown>) : {};
+}
+
+function optionalString(...values: unknown[]): string | undefined {
+  for (const value of values) {
+    if (typeof value === "string" && value.trim().length > 0) {
+      return value.trim();
+    }
+  }
+  return undefined;
+}
+
+function sessionIdFrom(event: Record<string, unknown>, ctx: Record<string, unknown>): string {
+  return (
+    optionalString(ctx.sessionKey, ctx.sessionId, event.sessionKey, event.sessionId, ctx.conversationId, event.conversationId) ??
+    "default-session"
+  );
+}
+
+function availableToolsFrom(event: Record<string, unknown>, ctx: Record<string, unknown>): Set<string> | string[] | undefined {
+  const availableTools = ctx.availableTools ?? event.availableTools;
+  if (availableTools instanceof Set || Array.isArray(availableTools)) {
+    return availableTools as Set<string> | string[];
+  }
+  return undefined;
+}
+
+function registerTool(api: OpenClawPluginApi, definition: OpenClawToolDefinition): void {
+  const exposed = { label: definition.name, ...definition };
+  api.registerTool?.(() => exposed, { names: [definition.name], name: definition.name });
+}
+
 const retrievalToolParameters = jsonSchema(
   {
     query: { type: "string" },
@@ -128,9 +161,66 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
   }
 
   for (const definition of tools) {
-    api.registerTool?.(definition);
+    registerTool(api, definition);
   }
   orchestrator.markRegistered({ toolsRegistered: true });
+}
+
+function registerRuntimeHooks(api: OpenClawPluginApi, orchestrator: OmsOrchestrator, logger: Logger): void {
+  if (!api.on) {
+    return;
+  }
+
+  api.on(
+    "before_prompt_build",
+    async (eventInput, ctxInput) => {
+      const event = asRecord(eventInput);
+      const ctx = asRecord(ctxInput);
+      try {
+        const assembled = orchestrator.assemble({
+          sessionId: sessionIdFrom(event, ctx),
+          messages: Array.isArray(event.messages) ? event.messages : [],
+          availableTools: availableToolsFrom(event, ctx)
+        });
+        if (!assembled.systemPromptAddition.trim()) {
+          return;
+        }
+        return {
+          prependSystemContext: assembled.systemPromptAddition,
+          prependContext: assembled.systemPromptAddition
+        };
+      } catch (error) {
+        logger.warn("oms before_prompt_build hook failed", {
+          reason: error instanceof Error ? error.message : String(error)
+        });
+        return;
+      }
+    },
+    { timeoutMs: 5000 }
+  );
+
+  api.on(
+    "agent_end",
+    async (eventInput, ctxInput) => {
+      const event = asRecord(eventInput);
+      const ctx = asRecord(ctxInput);
+      if (!Array.isArray(event.messages) || event.messages.length === 0) {
+        return;
+      }
+      try {
+        await orchestrator.afterTurn({
+          sessionId: sessionIdFrom(event, ctx),
+          turnId: optionalString(event.turnId, ctx.turnId),
+          messages: event.messages
+        });
+      } catch (error) {
+        logger.warn("oms agent_end ingest hook failed", {
+          reason: error instanceof Error ? error.message : String(error)
+        });
+      }
+    },
+    { timeoutMs: 10000 }
+  );
 }
 
 function hasAvailableTool(availableTools: unknown, name: string): boolean {
@@ -328,6 +418,7 @@ const entry = {
     }
 
     registerTools(api, orchestrator);
+    registerRuntimeHooks(api, orchestrator, logger);
     return orchestrator;
   }
 };

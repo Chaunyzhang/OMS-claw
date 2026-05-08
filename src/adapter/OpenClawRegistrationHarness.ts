@@ -1,5 +1,5 @@
 import entry from "./PluginRegistration.js";
-import type { OpenClawPluginApi, OpenClawToolDefinition } from "./OpenClawTypes.js";
+import type { OpenClawPluginApi, OpenClawToolDefinition, OpenClawToolFactory } from "./OpenClawTypes.js";
 
 export interface RegistrationHarnessResult {
   ok: boolean;
@@ -8,6 +8,7 @@ export interface RegistrationHarnessResult {
   contextEngineIds: string[];
   memoryCapabilityIds: string[];
   memoryCapabilities: Array<Record<string, unknown>>;
+  eventNames: string[];
   bootstrapStatus?: unknown;
   errors: string[];
   orchestrator?: unknown;
@@ -21,6 +22,7 @@ export function runOpenClawRegistrationHarness(input: {
   const contextFactories = new Map<string, () => Record<string, unknown>>();
   const memoryCapabilityIds: string[] = [];
   const memoryCapabilities: Array<Record<string, unknown>> = [];
+  const eventNames: string[] = [];
   const errors: string[] = [];
   let orchestrator: unknown;
 
@@ -31,7 +33,23 @@ export function runOpenClawRegistrationHarness(input: {
     rootDir: process.cwd(),
     pluginConfig: input.pluginConfig ?? {},
     logger: {},
-    registerTool(tool: OpenClawToolDefinition) {
+    registerTool(tool: OpenClawToolDefinition | OpenClawToolFactory, opts?: Record<string, unknown>) {
+      const names = opts?.names;
+      if (Array.isArray(names)) {
+        toolNames.push(...names.map(String));
+        return;
+      }
+      if (typeof opts?.name === "string") {
+        toolNames.push(opts.name);
+        return;
+      }
+      if (typeof tool === "function") {
+        const resolved = tool({});
+        if (resolved && typeof (resolved as OpenClawToolDefinition).name === "string") {
+          toolNames.push((resolved as OpenClawToolDefinition).name);
+        }
+        return;
+      }
       toolNames.push(tool.name);
     },
     registerContextEngine(id: string, factory: () => Record<string, unknown>) {
@@ -40,6 +58,9 @@ export function runOpenClawRegistrationHarness(input: {
     registerMemoryCapability(capability: Record<string, unknown>) {
       memoryCapabilityIds.push(String(capability.id ?? "unknown"));
       memoryCapabilities.push(capability);
+    },
+    on(eventName: string) {
+      eventNames.push(eventName);
     }
   };
 
@@ -83,6 +104,7 @@ export function runOpenClawRegistrationHarness(input: {
     contextEngineIds: Array.from(contextFactories.keys()),
     memoryCapabilityIds,
     memoryCapabilities,
+    eventNames,
     bootstrapStatus,
     errors,
     orchestrator

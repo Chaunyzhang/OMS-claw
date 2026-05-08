@@ -25,4 +25,28 @@ describe("raw writer", () => {
     expect(raw?.originalHash).toMatch(/^sha256:/u);
     connection.close();
   });
+
+  it("does not duplicate replayed event messages with stable turn indexes", () => {
+    const connection = new SQLiteConnection(":memory:");
+    const store = new RawMessageStore(connection.db);
+    const writer = new RawWriter(store, new EventStore(connection.db), "agent-1");
+
+    const first = writer.write({
+      sessionId: "s1",
+      turnIndex: 1,
+      role: "user",
+      originalText: "Remember the Paperclip architecture note."
+    });
+    const replay = writer.write({
+      sessionId: "s1",
+      turnIndex: 1,
+      role: "user",
+      originalText: "Remember the Paperclip architecture note."
+    });
+
+    expect(replay.ok).toBe(true);
+    expect(replay.messageId).toBe(first.messageId);
+    expect(store.count()).toBe(1);
+    connection.close();
+  });
 });

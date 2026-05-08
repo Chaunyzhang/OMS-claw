@@ -18,6 +18,22 @@
       "contextEngine": "oms"
     }
   },
+  "contracts": {
+    "tools": [
+      "oms_status",
+      "oms_search",
+      "oms_retrieve",
+      "oms_timeline",
+      "oms_summary_search",
+      "oms_expand_evidence",
+      "oms_fts_search",
+      "oms_trace",
+      "oms_debug_lanes",
+      "oms_why",
+      "oms_git_export",
+      "oms_debug_raw"
+    ]
+  },
   "configSchema": {
     "type": "object",
     "additionalProperties": true,

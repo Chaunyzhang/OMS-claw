@@ -33,6 +33,14 @@ export class SummaryDagBuilder {
       throw new Error("no_raw_messages_for_turn");
     }
     const sourceHash = SummaryStore.hashSources(messages.map((message) => `${message.messageId}:${message.originalHash}:${message.sequence}`));
+    const existing = this.summaries.activeBySourceHash({
+      agentId: input.agentId,
+      sourceHash,
+      nodeKind: "leaf"
+    });
+    if (existing) {
+      return existing;
+    }
     const summary = this.summaries.create({
       agentId: input.agentId,
       sessionId: input.sessionId,

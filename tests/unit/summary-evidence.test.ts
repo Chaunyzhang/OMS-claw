@@ -35,4 +35,32 @@ describe("summary DAG and evidence expansion", () => {
     expect(packet.rawExcerpts.every((excerpt) => excerpt.sourcePurpose === "material_corpus")).toBe(true);
     oms.connection.close();
   });
+
+  it("does not create duplicate leaf summaries for the same raw turn", async () => {
+    const oms = new OmsOrchestrator(
+      createDefaultConfig({
+        agentId: "summary-dedupe-agent",
+        dbPath: ":memory:",
+        graphEnabled: false
+      })
+    );
+
+    oms.ingest({
+      sessionId: "s1",
+      turnId: "t1",
+      turnIndex: 1,
+      messages: [
+        { role: "user", content: "Remember: OMS summaries should dedupe by source hash." },
+        { role: "assistant", content: "Stored." }
+      ]
+    });
+
+    const first = await oms.afterTurn({ sessionId: "s1", turnId: "t1" });
+    const second = await oms.afterTurn({ sessionId: "s1", turnId: "t1" });
+
+    expect(first.summarized).toBe(true);
+    expect(second.summarized).toBe(true);
+    expect(oms.summaries.count()).toBe(1);
+    oms.connection.close();
+  });
 });

@@ -22,6 +22,8 @@ describe("minimal runnable acceptance scenario", () => {
     expect(harness.contextEngineIds).toContain("oms");
     expect(harness.memoryCapabilityIds).toContain("oms");
     expect(harness.toolNames).toContain("oms_expand_evidence");
+    expect(harness.eventNames).toContain("before_prompt_build");
+    expect(harness.eventNames).toContain("agent_end");
     const oms = harness.orchestrator as OmsOrchestrator;
 
     oms.ingest({

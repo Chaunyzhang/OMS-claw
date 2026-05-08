@@ -92,10 +92,21 @@ export class RawMessageStore {
   }
 
   write(input: RawWriteInput & { agentId: string }): RawWriteReceipt {
-    const messageId = `raw_${randomUUID()}`;
-    const sequence = input.sequence ?? this.nextSequence(input.agentId);
     const normalizedText = normalizeText(input.originalText);
     const originalHash = hashOriginal(input.originalText);
+    const existing = this.findExistingReceipt({
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      role: input.role,
+      turnIndex: input.turnIndex,
+      originalHash
+    });
+    if (existing) {
+      return existing;
+    }
+
+    const messageId = `raw_${randomUUID()}`;
+    const sequence = input.sequence ?? this.nextSequence(input.agentId);
     const createdAt = input.createdAt ?? new Date().toISOString();
     const turnId = input.turnId ?? `turn_${input.sessionId}_${input.turnIndex ?? sequence}`;
     const turnIndex = input.turnIndex ?? sequence;
@@ -238,6 +249,58 @@ export class RawMessageStore {
       next: number;
     };
     return Number(row.next);
+  }
+
+  private findExistingReceipt(input: {
+    agentId: string;
+    sessionId: string;
+    role: RawWriteInput["role"];
+    turnIndex?: number;
+    originalHash: string;
+  }): RawWriteReceipt | undefined {
+    if (typeof input.turnIndex !== "number" || !Number.isFinite(input.turnIndex)) {
+      return undefined;
+    }
+    const row = this.db
+      .prepare(
+        `SELECT message_id, turn_id, sequence, source_purpose, source_authority,
+                retrieval_allowed, evidence_allowed
+         FROM raw_messages
+         WHERE agent_id = ?
+           AND session_id = ?
+           AND role = ?
+           AND turn_index = ?
+           AND original_hash = ?
+         ORDER BY sequence ASC
+         LIMIT 1`
+      )
+      .get(input.agentId, input.sessionId, input.role, input.turnIndex, input.originalHash) as
+      | {
+          message_id: string;
+          turn_id: string;
+          sequence: number;
+          source_purpose: RawWriteReceipt["sourcePurpose"];
+          source_authority: RawWriteReceipt["sourceAuthority"];
+          retrieval_allowed: number;
+          evidence_allowed: number;
+        }
+      | undefined;
+    if (!row) {
+      return undefined;
+    }
+    return {
+      ok: true,
+      agentId: input.agentId,
+      sessionId: input.sessionId,
+      turnId: row.turn_id,
+      messageId: row.message_id,
+      originalHash: input.originalHash,
+      sequence: Number(row.sequence),
+      sourcePurpose: row.source_purpose,
+      sourceAuthority: row.source_authority,
+      retrievalAllowed: Number(row.retrieval_allowed) === 1,
+      evidenceAllowed: Number(row.evidence_allowed) === 1
+    };
   }
 
   private updateTurnMessage(turnId: string, role: "user" | "assistant", messageId: string): void {

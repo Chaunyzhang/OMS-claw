@@ -60,6 +60,21 @@ export class SummaryStore {
     return found;
   }
 
+  activeBySourceHash(input: { agentId: string; sourceHash: string; nodeKind?: SummaryRecord["nodeKind"] }): SummaryRecord | undefined {
+    const row = this.db
+      .prepare(
+        `SELECT * FROM summaries
+         WHERE agent_id = ?
+           AND source_hash = ?
+           AND status = 'active'
+           AND (? IS NULL OR node_kind = ?)
+         ORDER BY created_at ASC
+         LIMIT 1`
+      )
+      .get(input.agentId, input.sourceHash, input.nodeKind ?? null, input.nodeKind ?? null) as Record<string, unknown> | undefined;
+    return row ? mapSummary(row) : undefined;
+  }
+
   byId(summaryId: string): SummaryRecord | undefined {
     const row = this.db.prepare("SELECT * FROM summaries WHERE summary_id = ?").get(summaryId) as Record<string, unknown> | undefined;
     return row ? mapSummary(row) : undefined;

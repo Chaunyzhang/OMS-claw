@@ -13,6 +13,20 @@ const DOMAIN_PHRASES = [
   "community art"
 ];
 
+const GRAPHABLE_SOURCE_PURPOSES = new Set(["general_chat", "material_corpus", "formal_question", "imported_timeline"]);
+const MAX_LABELS_PER_MESSAGE = 8;
+const MAX_PAIR_DISTANCE = 3;
+
+function shouldGraph(raw: RawMessage): boolean {
+  if (!raw.retrievalAllowed || raw.role !== "user") {
+    return false;
+  }
+  if (!GRAPHABLE_SOURCE_PURPOSES.has(raw.sourcePurpose)) {
+    return false;
+  }
+  return !raw.normalizedText.startsWith("## oms openclaw memory") && !raw.normalizedText.includes("[oms memory policy]");
+}
+
 function extractLabels(raw: RawMessage): string[] {
   const labels = new Set<string>();
   for (const match of raw.originalText.matchAll(/\b[A-Z][a-zA-Z0-9_-]{2,}(?:\s+[A-Z][a-zA-Z0-9_-]{2,}){0,3}\b/gu)) {
@@ -27,7 +41,7 @@ function extractLabels(raw: RawMessage): string[] {
   for (const match of normalized.matchAll(/\b(?:\d{4}|v\d+(?:\.\d+)*|[a-z0-9_-]+\/[a-z0-9_./-]+)\b/gu)) {
     labels.add(match[0]);
   }
-  return Array.from(labels).slice(0, 16);
+  return Array.from(labels).slice(0, MAX_LABELS_PER_MESSAGE);
 }
 
 export class GraphBuilder {
@@ -39,7 +53,7 @@ export class GraphBuilder {
   buildForAgent(agentId: string, limit = 5000): { nodes: number; edges: number } {
     let nodes = 0;
     let edges = 0;
-    for (const raw of this.rawMessages.allForAgent(agentId, limit).filter((message) => message.retrievalAllowed)) {
+    for (const raw of this.rawMessages.allForAgent(agentId, limit).filter((message) => shouldGraph(message))) {
       const nodeIds = extractLabels(raw).map((label) => {
         nodes += 1;
         return this.graph.upsertNode({
@@ -51,7 +65,7 @@ export class GraphBuilder {
         });
       });
       for (let left = 0; left < nodeIds.length; left += 1) {
-        for (let right = left + 1; right < Math.min(nodeIds.length, left + 8); right += 1) {
+        for (let right = left + 1; right < Math.min(nodeIds.length, left + 1 + MAX_PAIR_DISTANCE); right += 1) {
           this.graph.upsertEdge({
             agentId,
             fromNodeId: nodeIds[left],
