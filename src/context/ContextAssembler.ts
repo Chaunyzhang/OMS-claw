@@ -2,6 +2,7 @@ import { RawMessageStore } from "../storage/RawMessageStore.js";
 import type { OmsConfig } from "../types.js";
 import { ContextBridge } from "./ContextBridge.js";
 import { OMS_RECALL_POLICY_PROMPT } from "./RecallPolicyPrompt.js";
+import { hasDetectedSecrets } from "../ingest/SecretScanner.js";
 
 interface AssembleInput {
   sessionId: string;
@@ -39,7 +40,9 @@ export class ContextAssembler {
   ) {}
 
   assemble(input: AssembleInput) {
-    const recentTurns = this.rawMessages.recentCompleteTurns(this.config.agentId, input.sessionId, this.config.recentCompleteTurns);
+    const recentTurns = this.rawMessages
+      .recentCompleteTurns(this.config.agentId, input.sessionId, this.config.recentCompleteTurns)
+      .filter((message) => message.retrievalAllowed && !hasDetectedSecrets(message.metadata));
     const messages = Array.isArray(input.messages) ? input.messages : [];
     const lines = [
       "## OMS OpenClaw Memory",

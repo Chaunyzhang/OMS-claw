@@ -3,14 +3,19 @@ import { RawMessageStore } from "../storage/RawMessageStore.js";
 import { SourceEdgeStore } from "../storage/SourceEdgeStore.js";
 import { SummaryStore } from "../storage/SummaryStore.js";
 import type { RawMessage, SummaryRecord } from "../types.js";
+import { hasDetectedSecrets } from "../ingest/SecretScanner.js";
 
 function makeSummaryText(messages: RawMessage[]): string {
   const joined = messages
-    .map((message) => `${message.role}: ${message.originalText}`)
+    .map((message) => `${message.role}: ${summaryTextFor(message)}`)
     .join("\n")
     .replace(/\s+/gu, " ")
     .trim();
   return joined.length > 360 ? `${joined.slice(0, 357)}...` : joined;
+}
+
+function summaryTextFor(message: RawMessage): string {
+  return hasDetectedSecrets(message.metadata) ? "[blocked: sensitive content]" : message.originalText;
 }
 
 export class SummaryDagBuilder {

@@ -31,6 +31,7 @@ import { AnnVectorLane } from "../retrieval/lanes/AnnVectorLane.js";
 import { GraphCteLane } from "../retrieval/lanes/GraphCteLane.js";
 import { SQLRRFusion } from "../retrieval/SQLRRFusion.js";
 import { QueryIntentClassifier } from "../retrieval/QueryIntentClassifier.js";
+import { GitMdWriter } from "../git/GitMdWriter.js";
 import { TimelineExporter } from "../git/TimelineExporter.js";
 import { RuntimeAttestation } from "./RuntimeAttestation.js";
 import { TaskQueue } from "./TaskQueue.js";
@@ -99,7 +100,12 @@ export class OmsOrchestrator {
     this.embeddings = new EmbeddingStore(this.connection.db);
     this.embeddingProvider = createEmbeddingProvider(config);
     this.graph = new GraphStore(this.connection.db);
-    this.rawWriter = new RawWriter(this.rawMessages, this.events, config.agentId);
+    this.rawWriter = new RawWriter(
+      this.rawMessages,
+      this.events,
+      config.agentId,
+      config.gitExportEnabled && config.memoryRepoPath ? new GitMdWriter(config.memoryRepoPath) : undefined
+    );
     this.summaryDag = new SummaryDagBuilder(this.summaries, this.sourceEdges, this.rawMessages, this.events);
     this.embeddingBuilder = new EmbeddingBuilder(this.rawMessages, this.embeddings, this.embeddingProvider);
     this.graphBuilder = new GraphBuilder(this.rawMessages, this.graph);
@@ -201,6 +207,7 @@ export class OmsOrchestrator {
           : 0;
       ingestResult = this.ingest({
         sessionId,
+        turnId: input.turnId,
         messages: input.messages.slice(start)
       });
     }

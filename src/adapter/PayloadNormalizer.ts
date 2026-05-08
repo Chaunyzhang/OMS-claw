@@ -25,6 +25,14 @@ function textFromContent(content: unknown): string | undefined {
   return undefined;
 }
 
+function finiteTurnIndex(value: unknown): number | undefined {
+  if (value === undefined) {
+    return undefined;
+  }
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? Math.max(0, Math.floor(parsed)) : undefined;
+}
+
 export class PayloadNormalizer {
   normalize(input: unknown): IngestCandidate[] {
     if (!input || typeof input !== "object") {
@@ -33,14 +41,15 @@ export class PayloadNormalizer {
     const value = input as Record<string, unknown>;
     const sessionId = String(value.sessionId ?? value.session_id ?? value.openclawSessionKey ?? "default-session");
     const turnId = value.turnId === undefined ? undefined : String(value.turnId);
-    const turnIndex = value.turnIndex === undefined ? undefined : Number(value.turnIndex);
+    const turnIndex = finiteTurnIndex(value.turnIndex);
 
     if (Array.isArray(value.messages)) {
+      const sharedHostTurn = turnId !== undefined && turnIndex === undefined;
       return value.messages.flatMap((message, index) =>
         this.normalizeMessage(message, {
           sessionId,
           turnId,
-          turnIndex: turnIndex ?? index + 1
+          turnIndex: sharedHostTurn ? undefined : turnIndex ?? index + 1
         })
       );
     }
@@ -68,7 +77,7 @@ export class PayloadNormalizer {
       {
         sessionId: String(value.sessionId ?? value.session_id ?? defaults.sessionId),
         turnId: value.turnId === undefined ? defaults.turnId : String(value.turnId),
-        turnIndex: value.turnIndex === undefined ? defaults.turnIndex : Number(value.turnIndex),
+        turnIndex: value.turnIndex === undefined ? defaults.turnIndex : finiteTurnIndex(value.turnIndex),
         role: role as RawRole,
         text,
         eventType: value.eventType === undefined ? undefined : String(value.eventType),

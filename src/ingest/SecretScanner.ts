@@ -18,8 +18,18 @@ export class SecretScanner {
   scan(text: string): SecretScanResult {
     const detected = SECRET_PATTERNS.filter(([, pattern]) => pattern.test(text)).map(([name]) => name);
     return {
-      ok: true,
-      detected
+      ok: detected.length === 0,
+      detected,
+      reason: detected.length === 0 ? undefined : "secret_detected"
     };
   }
+}
+
+export function hasDetectedSecrets(metadata?: Record<string, unknown>): boolean {
+  const secretScan = metadata?.secretScan;
+  if (!secretScan || typeof secretScan !== "object") {
+    return false;
+  }
+  const detected = (secretScan as { detected?: unknown }).detected;
+  return Array.isArray(detected) && detected.length > 0;
 }

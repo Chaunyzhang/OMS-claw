@@ -63,4 +63,62 @@ describe("summary DAG and evidence expansion", () => {
     expect(oms.summaries.count()).toBe(1);
     oms.connection.close();
   });
+
+  it("uses the host turn id when afterTurn ingests hook messages", async () => {
+    const oms = new OmsOrchestrator(createDefaultConfig({ agentId: "after-turn-agent", dbPath: ":memory:" }));
+
+    const result = await oms.afterTurn({
+      sessionId: "hook-session",
+      turnId: "host-turn-1",
+      messages: [
+        { role: "user", content: "Remember: host turn id must be preserved." },
+        { role: "assistant", content: "I will remember it." }
+      ]
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.receipts.every((receipt) => receipt.ok && receipt.turnId === "host-turn-1")).toBe(true);
+    expect(oms.queue.recentFailures()).toHaveLength(0);
+    expect(oms.summaries.count()).toBe(1);
+    oms.connection.close();
+  });
+
+  it("ranks summary navigation with the same material evidence policy used by expansion", async () => {
+    const oms = new OmsOrchestrator(createDefaultConfig({ agentId: "summary-policy-agent", dbPath: ":memory:" }));
+
+    oms.rawWriter.write({
+      sessionId: "valid",
+      turnId: "valid-turn",
+      turnIndex: 1,
+      role: "user",
+      sourcePurpose: "material_corpus",
+      sourceAuthority: "authoritative_material",
+      evidencePolicyMask: "material_evidence",
+      originalText: "ranked sunrise valid evidence"
+    });
+    oms.summaryDag.buildLeafForTurn({ agentId: oms.config.agentId, sessionId: "valid", turnId: "valid-turn" });
+
+    oms.rawWriter.write({
+      sessionId: "invalid",
+      turnId: "invalid-turn",
+      turnIndex: 1,
+      role: "user",
+      sourcePurpose: "material_corpus",
+      sourceAuthority: "original_user_supplied_material",
+      evidencePolicyMask: "general_history",
+      originalText: "ranked sunrise extra invalid evidence"
+    });
+    oms.summaryDag.buildLeafForTurn({ agentId: oms.config.agentId, sessionId: "invalid", turnId: "invalid-turn" });
+
+    const hits = oms.summarySearchTool({ query: "ranked sunrise extra", limit: 2 });
+    const packet = oms.expandEvidenceTool({
+      summaryId: hits[0].summaryId,
+      mode: "high",
+      evidencePolicy: "material_evidence"
+    });
+
+    expect(packet.status).toBe("delivered");
+    expect(packet.rawExcerpts[0].originalText).toContain("valid evidence");
+    oms.connection.close();
+  });
 });

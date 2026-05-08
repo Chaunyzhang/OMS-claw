@@ -189,7 +189,8 @@ export interface AuthorityReport {
       | "current_question_session"
       | "assistant_storage_receipt"
       | "formal_question"
-      | "diagnostic_not_allowed";
+      | "diagnostic_not_allowed"
+      | "secret_detected";
   }>;
 }
 

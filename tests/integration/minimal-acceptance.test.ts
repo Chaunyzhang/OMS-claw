@@ -1,10 +1,17 @@
 import { describe, expect, it } from "vitest";
-import { mkdtempSync, existsSync, rmSync } from "node:fs";
+import { mkdtempSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createDefaultConfig } from "../../src/core/ConfigResolver.js";
 import { OmsOrchestrator } from "../../src/core/OmsOrchestrator.js";
 import { runOpenClawRegistrationHarness } from "../../src/adapter/OpenClawRegistrationHarness.js";
+
+function listFiles(dir: string): string[] {
+  return readdirSync(dir).flatMap((entry) => {
+    const path = join(dir, entry);
+    return statSync(path).isDirectory() ? listFiles(path) : [path];
+  });
+}
 
 describe("minimal runnable acceptance scenario", () => {
   it("stores material, excludes interference, expands evidence, traces, and exports timeline", async () => {
@@ -53,6 +60,7 @@ describe("minimal runnable acceptance scenario", () => {
     });
 
     await oms.afterTurn({ sessionId: "material-session", turnId: "material-turn-1" });
+    const realtimeMdFiles = listFiles(join(memoryRepo, "raw")).filter((path) => path.endsWith(".md"));
     const hits = oms.summarySearchTool({ query: "Melanie lake sunrise" });
     const packet = oms.expandEvidenceTool({
       summaryId: hits[0].summaryId,
@@ -68,6 +76,7 @@ describe("minimal runnable acceptance scenario", () => {
 
     expect(status.build.commitSha).toBeTruthy();
     expect(status.openclaw.toolsRegistered).toBe(true);
+    expect(realtimeMdFiles.length).toBeGreaterThan(0);
     expect(packet.status).toBe("delivered");
     expect(packet.selectedAuthoritativeRawCount).toBeGreaterThan(0);
     expect(packet.rawExcerptHash).toMatch(/^sha256:/u);

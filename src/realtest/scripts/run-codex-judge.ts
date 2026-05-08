@@ -193,18 +193,23 @@ function readFinalAnswer(input: JudgeInput): string | null {
 }
 
 function matchesAnswer(finalAnswer: string, answerKey: JudgeInput["answerKey"]): boolean {
-  const normalized = finalAnswer.toLowerCase();
+  const normalized = normalizeAnswerText(finalAnswer);
   const acceptable = [answerKey?.expected, ...(answerKey?.acceptable ?? [])].filter((item): item is string => Boolean(item));
-  const hasAcceptable = acceptable.some((candidate) => normalized.includes(candidate.toLowerCase()));
+  const hasAcceptable = acceptable.some((candidate) => normalized.includes(normalizeAnswerText(candidate)));
   if (!hasAcceptable) {
     return false;
   }
   for (const forbidden of answerKey?.forbidden ?? []) {
-    if (/no record|not found|no authoritative|could not find/iu.test(forbidden) && normalized.includes(forbidden.toLowerCase())) {
+    const normalizedForbidden = normalizeAnswerText(forbidden);
+    if (normalizedForbidden && normalized.includes(normalizedForbidden)) {
       return false;
     }
   }
   return true;
+}
+
+function normalizeAnswerText(text: string): string {
+  return text.normalize("NFKC").toLowerCase().replace(/\s+/gu, " ").trim();
 }
 
 function requiredModuleObserved(input: JudgeInput): boolean {

@@ -1,7 +1,46 @@
-import { mkdirSync } from "node:fs";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import type { OmsConfig, OmsMode } from "../types.js";
+
+const DEFAULT_AGENT_ID = "oms-agent-default";
+
+function pathSafeAgentId(agentId: string): string {
+  return (
+    agentId
+      .normalize("NFKC")
+      .trim()
+      .replace(/[^A-Za-z0-9_.-]+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, 80) || DEFAULT_AGENT_ID
+  );
+}
+
+function configuredOpenClawAgentCount(configPath: string): number | undefined {
+  if (!existsSync(configPath)) {
+    return undefined;
+  }
+  try {
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
+      agents?: { list?: unknown[] };
+    };
+    return Array.isArray(config.agents?.list) ? config.agents.list.length : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
+function resolveAgentId(input: Record<string, unknown>): string {
+  if (typeof input.agentId === "string" && input.agentId.trim().length > 0) {
+    return input.agentId.trim();
+  }
+  const configPath = resolve(String(input.openclawConfigPath ?? join(homedir(), ".openclaw", "openclaw.json")));
+  const agentCount = configuredOpenClawAgentCount(configPath);
+  if (agentCount !== undefined && agentCount > 1 && input.allowDefaultAgentId !== true) {
+    throw new Error("oms_agent_id_required_for_multi_agent_openclaw_config");
+  }
+  return DEFAULT_AGENT_ID;
+}
 
 function asMode(value: unknown): OmsMode {
   return value === "off" || value === "low" || value === "medium" || value === "high" || value === "xhigh" || value === "ultra"
@@ -12,10 +51,11 @@ function asMode(value: unknown): OmsMode {
 export function createDefaultConfig(input: Record<string, unknown> = {}): OmsConfig {
   const baseDir = resolve(String(input.baseDir ?? join(homedir(), ".openclaw", "oms")));
   mkdirSync(baseDir, { recursive: true });
-  const agentId = String(input.agentId ?? "oms-agent-default");
-  const dbPathInput = String(input.dbPath ?? join(baseDir, `${agentId}.sqlite`));
+  const agentId = resolveAgentId(input);
+  const agentPathId = pathSafeAgentId(agentId);
+  const dbPathInput = String(input.dbPath ?? join(baseDir, `${agentPathId}.sqlite`));
   const dbPath = dbPathInput === ":memory:" ? ":memory:" : resolve(dbPathInput);
-  const memoryRepoPath = input.memoryRepoPath === undefined ? join(baseDir, "memory-repo") : resolve(String(input.memoryRepoPath));
+  const memoryRepoPath = input.memoryRepoPath === undefined ? join(baseDir, agentPathId, "gitmd") : resolve(String(input.memoryRepoPath));
 
   const embeddingProvider =
     input.embeddingProvider === "local_hash" || input.embeddingProvider === "openrouter" ? input.embeddingProvider : "disabled";

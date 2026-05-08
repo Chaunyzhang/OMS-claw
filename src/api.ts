@@ -19,4 +19,5 @@ export { GraphCteLane } from "./retrieval/lanes/GraphCteLane.js";
 export { SQLRRFusion } from "./retrieval/SQLRRFusion.js";
 export { CompactionPlanner } from "./context/CompactionPlanner.js";
 export { Redactor } from "./git/Redactor.js";
+export { GitMdWriter } from "./git/GitMdWriter.js";
 export { RuntimeAttestation } from "./core/RuntimeAttestation.js";

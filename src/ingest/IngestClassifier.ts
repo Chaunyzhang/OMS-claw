@@ -29,20 +29,23 @@ export class IngestClassifier {
       text: candidate.text,
       metadata: candidate.metadata
     });
-    const secretScan = this.secretScanner.scan(candidate.text);
+    const originalText = classification.materialText ?? candidate.text;
+    const secretScan = this.secretScanner.scan(originalText);
+    const secretDetected = secretScan.detected.length > 0;
     return {
       sessionId: candidate.sessionId,
       turnId: candidate.turnId,
       turnIndex: candidate.turnIndex,
       role: candidate.role,
       eventType: candidate.eventType ?? "created",
-      originalText: candidate.text,
+      originalText,
       createdAt: candidate.createdAt,
       sourceScope: classification.sourceScope,
       sourcePurpose: classification.sourcePurpose,
       sourceAuthority: classification.sourceAuthority,
-      retrievalAllowed: classification.retrievalAllowed,
-      evidencePolicyMask: classification.evidencePolicyMask,
+      retrievalAllowed: secretDetected ? false : classification.retrievalAllowed,
+      evidenceAllowed: secretDetected ? false : undefined,
+      evidencePolicyMask: secretDetected ? "never_evidence" : classification.evidencePolicyMask,
       caseId: classification.caseId,
       interrupted: candidate.interrupted,
       metadata: {

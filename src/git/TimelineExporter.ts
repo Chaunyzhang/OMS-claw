@@ -1,9 +1,10 @@
-import { mkdirSync, writeFileSync, appendFileSync, existsSync } from "node:fs";
+import { mkdirSync, appendFileSync } from "node:fs";
 import { join } from "node:path";
 import { EventStore } from "../storage/EventStore.js";
 import type { RawMessage } from "../types.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
 import { Redactor } from "./Redactor.js";
+import { GitMdWriter, ensureGitMdManifest } from "./GitMdWriter.js";
 
 export class TimelineExporter {
   private readonly redactor = new Redactor();
@@ -12,29 +13,37 @@ export class TimelineExporter {
   constructor(private readonly events: EventStore) {}
 
   export(input: { agentId: string; memoryRepoPath: string; messages: RawMessage[]; force?: boolean }) {
+    const manifest = ensureGitMdManifest(input);
+    if (!manifest.ok) {
+      this.events.record({
+        agentId: input.agentId,
+        sessionId: input.messages[0]?.sessionId ?? "none",
+        eventType: "export_failed",
+        payload: { reason: manifest.reason, memoryRepoPath: input.memoryRepoPath, foundAgentId: manifest.foundAgentId }
+      });
+      return { ok: false, reason: manifest.reason, exported: [] as string[] };
+    }
     mkdirSync(join(input.memoryRepoPath, "timeline"), { recursive: true });
     mkdirSync(join(input.memoryRepoPath, "exports"), { recursive: true });
-    const manifestPath = join(input.memoryRepoPath, "manifest.json");
-    if (!existsSync(manifestPath)) {
-      writeFileSync(
-        manifestPath,
-        `${JSON.stringify(
-          {
-            format: "oms-timeline-v1",
-            agent_id: input.agentId,
-            created_at: new Date().toISOString(),
-            source: "sqlite",
-            redaction: { enabled: true, policy: "default" }
-          },
-          null,
-          2
-        )}\n`,
-        "utf8"
-      );
-    }
 
+    const gitMdWriter = new GitMdWriter(input.memoryRepoPath);
     const exported: string[] = [];
     for (const message of input.messages) {
+      const rawMirror = gitMdWriter.writeRaw({ agentId: input.agentId, message, force: input.force });
+      if (!rawMirror.ok) {
+        this.events.record({
+          agentId: input.agentId,
+          sessionId: message.sessionId,
+          messageId: message.messageId,
+          eventType: "export_failed",
+          payload: { reason: rawMirror.reason, foundAgentId: "foundAgentId" in rawMirror ? rawMirror.foundAgentId : undefined }
+        });
+        return { ok: false, reason: rawMirror.reason, exported };
+      }
+      if (rawMirror.path) {
+        exported.push(rawMirror.path);
+      }
+
       const redaction = this.redactor.redact(message.originalText);
       if (!redaction.ok && !input.force) {
         this.events.record({

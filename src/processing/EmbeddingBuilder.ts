@@ -1,6 +1,7 @@
 import { RawMessageStore } from "../storage/RawMessageStore.js";
 import { EmbeddingStore } from "../storage/EmbeddingStore.js";
 import type { EmbeddingProvider } from "./EmbeddingProvider.js";
+import { hasDetectedSecrets } from "../ingest/SecretScanner.js";
 
 export class EmbeddingBuilder {
   constructor(
@@ -16,7 +17,9 @@ export class EmbeddingBuilder {
     }
     let indexed = 0;
     let skipped = 0;
-    const raw = this.rawMessages.allForAgent(agentId, limit).filter((message) => message.retrievalAllowed);
+    const raw = this.rawMessages
+      .allForAgent(agentId, limit)
+      .filter((message) => message.retrievalAllowed && !hasDetectedSecrets(message.metadata));
     for (const message of raw) {
       if (this.embeddings.hasCurrentRaw(message, this.provider.model)) {
         skipped += 1;

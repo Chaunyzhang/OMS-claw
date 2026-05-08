@@ -1,4 +1,5 @@
 import type { AuthorityReport, EvidencePolicyRequest, RawMessage } from "../types.js";
+import { hasDetectedSecrets } from "../ingest/SecretScanner.js";
 
 export class EvidencePolicy {
   verify(
@@ -36,6 +37,9 @@ export class EvidencePolicy {
     caseId?: string,
     currentQuestionSessionId?: string
   ): AuthorityReport["blockedReasons"][number]["reason"] | undefined {
+    if (hasDetectedSecrets(message.metadata)) {
+      return "secret_detected";
+    }
     if (!message.retrievalAllowed) {
       return "retrieval_not_allowed";
     }

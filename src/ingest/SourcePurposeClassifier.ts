@@ -7,6 +7,7 @@ export interface SourceClassification {
   retrievalAllowed: boolean;
   caseId?: string;
   sourceScope: string;
+  materialText?: string;
 }
 
 const STORAGE_RECEIPT_PATTERNS = [
@@ -30,7 +31,8 @@ export class SourcePurposeClassifier {
         evidencePolicyMask: "material_evidence",
         retrievalAllowed: true,
         caseId: envelope.caseId,
-        sourceScope: "case_pack"
+        sourceScope: "case_pack",
+        materialText: envelope.materialText
       };
     }
 
@@ -73,8 +75,8 @@ export class SourcePurposeClassifier {
     };
   }
 
-  parseEnvelope(text: string): { caseId?: string } | undefined {
-    const match = text.match(/<!--\s*OMS_CAPTURE\s+([^>]+?)\s*-->/u);
+  parseEnvelope(text: string): { caseId?: string; materialText: string } | undefined {
+    const match = text.match(/<!--\s*OMS_CAPTURE\s+([^>]+?)\s*-->([\s\S]*)/u);
     if (!match) {
       return undefined;
     }
@@ -87,6 +89,6 @@ export class SourcePurposeClassifier {
     if (attrs.source_purpose !== "material_corpus" || attrs.evidence_policy !== "material_evidence") {
       return undefined;
     }
-    return { caseId: attrs.case_id };
+    return { caseId: attrs.case_id, materialText: match[2].replace(/^\s+/u, "") };
   }
 }

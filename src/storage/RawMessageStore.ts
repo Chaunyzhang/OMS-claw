@@ -94,11 +94,15 @@ export class RawMessageStore {
   write(input: RawWriteInput & { agentId: string }): RawWriteReceipt {
     const normalizedText = normalizeText(input.originalText);
     const originalHash = hashOriginal(input.originalText);
+    const sequence = input.sequence ?? this.nextSequence(input.agentId);
+    const existingTurnIndex = input.turnId ? this.turnIndexForTurn(input.turnId) : undefined;
+    const turnIndex = input.turnIndex ?? existingTurnIndex ?? this.nextTurnIndex(input.sessionId);
+    const turnId = input.turnId ?? `turn_${input.sessionId}_${turnIndex}`;
     const existing = this.findExistingReceipt({
       agentId: input.agentId,
       sessionId: input.sessionId,
       role: input.role,
-      turnIndex: input.turnIndex,
+      turnIndex,
       originalHash
     });
     if (existing) {
@@ -106,10 +110,7 @@ export class RawMessageStore {
     }
 
     const messageId = `raw_${randomUUID()}`;
-    const sequence = input.sequence ?? this.nextSequence(input.agentId);
     const createdAt = input.createdAt ?? new Date().toISOString();
-    const turnId = input.turnId ?? `turn_${input.sessionId}_${input.turnIndex ?? sequence}`;
-    const turnIndex = input.turnIndex ?? sequence;
     const retrievalAllowed = input.retrievalAllowed === false ? 0 : 1;
     const evidenceAllowed = input.evidenceAllowed ?? defaultEvidenceAllowed(input);
 
@@ -156,14 +157,16 @@ export class RawMessageStore {
 
     const rowId = (this.db.prepare("SELECT rowid FROM raw_messages WHERE message_id = ?").get(messageId) as { rowid: number }).rowid;
 
-    this.insertCandidateIndexes({
-      rowId,
-      messageId,
-      agentId: input.agentId,
-      sessionId: input.sessionId,
-      role: input.role,
-      normalizedText
-    });
+    if (retrievalAllowed === 1) {
+      this.insertCandidateIndexes({
+        rowId,
+        messageId,
+        agentId: input.agentId,
+        sessionId: input.sessionId,
+        role: input.role,
+        normalizedText
+      });
+    }
 
     this.updateTurnMessage(turnId, input.role, messageId);
 
@@ -265,6 +268,20 @@ export class RawMessageStore {
 
   private nextSequence(agentId: string): number {
     const row = this.db.prepare("SELECT COALESCE(MAX(sequence), 0) + 1 AS next FROM raw_messages WHERE agent_id = ?").get(agentId) as {
+      next: number;
+    };
+    return Number(row.next);
+  }
+
+  private turnIndexForTurn(turnId: string): number | undefined {
+    const row = this.db.prepare("SELECT turn_index AS turnIndex FROM turns WHERE turn_id = ?").get(turnId) as
+      | { turnIndex: number }
+      | undefined;
+    return row ? Number(row.turnIndex) : undefined;
+  }
+
+  private nextTurnIndex(sessionId: string): number {
+    const row = this.db.prepare("SELECT COALESCE(MAX(turn_index), 0) + 1 AS next FROM turns WHERE session_id = ?").get(sessionId) as {
       next: number;
     };
     return Number(row.next);

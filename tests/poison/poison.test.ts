@@ -99,6 +99,37 @@ describe("poison tests", () => {
     oms.connection.close();
   });
 
+  it("keeps detected secrets out of retrieval, evidence, summaries, and prompt context", async () => {
+    const oms = createOms();
+    const ingest = oms.ingest({
+      sessionId: "secret-session",
+      turnId: "secret-turn",
+      turnIndex: 1,
+      role: "user",
+      content: "password: hunter2 token=aaaaaaaaaaaaaaaaaaaaaaaa"
+    });
+    const rawId = ingest.receipts[0].messageId;
+    const raw = oms.rawMessages.byId(rawId);
+
+    expect(raw?.retrievalAllowed).toBe(false);
+    expect(raw?.evidenceAllowed).toBe(false);
+
+    const fts = await oms.ftsSearchTool({ query: "hunter2", evidencePolicy: "general_history" });
+    expect(fts.ok).toBe(false);
+    expect(fts.candidateCount).toBe(0);
+
+    const direct = oms.expandEvidenceTool({ rawMessageId: rawId, mode: "high", evidencePolicy: "general_history" });
+    expect(direct.status).toBe("blocked");
+    expect(direct.authorityReport.blockedReasons).toEqual(
+      expect.arrayContaining([expect.objectContaining({ reason: "secret_detected" })])
+    );
+
+    await oms.afterTurn({ sessionId: "secret-session", turnId: "secret-turn" });
+    expect(JSON.stringify(oms.summarySearchTool({ query: "hunter2" }))).not.toContain("hunter2");
+    expect(oms.assemble({ sessionId: "secret-session" }).systemPromptAddition).not.toContain("hunter2");
+    oms.connection.close();
+  });
+
   it("blocks high mode when associative candidates cannot expand to raw", () => {
     const oms = createOms();
     const packet = oms.expandEvidenceTool({ query: "associative only memory", mode: "high", evidencePolicy: "material_evidence" });
