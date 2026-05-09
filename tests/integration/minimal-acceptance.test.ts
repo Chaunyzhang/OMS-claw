@@ -2,8 +2,7 @@ import { describe, expect, it } from "vitest";
 import { mkdtempSync, existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { createDefaultConfig } from "../../src/core/ConfigResolver.js";
-import { OmsOrchestrator } from "../../src/core/OmsOrchestrator.js";
+import { OmsRuntimeRegistry } from "../../src/core/OmsRuntimeRegistry.js";
 import { runOpenClawRegistrationHarness } from "../../src/adapter/OpenClawRegistrationHarness.js";
 
 function listFiles(dir: string): string[] {
@@ -33,7 +32,7 @@ describe("minimal runnable acceptance scenario", () => {
     expect(harness.toolNames).toContain("oms_expand_evidence");
     expect(harness.eventNames).toContain("before_prompt_build");
     expect(harness.eventNames).toContain("agent_end");
-    const oms = harness.orchestrator as OmsOrchestrator;
+    const oms = (harness.orchestrator as OmsRuntimeRegistry).forContext({ agentId: "accept-agent" });
 
     oms.ingest({
       sessionId: "material-session",

@@ -633,7 +633,7 @@ describe("SQLite max retrieval decoupled architecture", () => {
       source: "test-host://oms",
       pluginConfig: { agentId: "runtime-agent", dbPath: ":memory:", debug: true }
     });
-    const oms = harness.orchestrator as OmsOrchestrator;
+    const oms = (harness.orchestrator as { forContext(input?: unknown): OmsOrchestrator }).forContext({ agentId: "runtime-agent" });
     await seedMelanieMaterial(oms);
 
     const capability = harness.memoryCapabilities[0] as {
