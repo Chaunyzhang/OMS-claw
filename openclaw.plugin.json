@@ -31,6 +31,7 @@
       "oms_debug_lanes",
       "oms_why",
       "oms_git_export",
+      "oms_git_import",
       "oms_debug_raw"
     ]
   },
@@ -39,6 +40,9 @@
     "additionalProperties": true,
     "properties": {
       "agentId": {
+        "type": "string"
+      },
+      "agentUid": {
         "type": "string"
       },
       "mode": {

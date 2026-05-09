@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, readFileSync, readdirSync, rmSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { basename, join } from "node:path";
 import { GitMdWriter } from "../../src/git/GitMdWriter.js";
 import { SQLiteConnection } from "../../src/storage/SQLiteConnection.js";
 import { RawMessageStore } from "../../src/storage/RawMessageStore.js";
@@ -96,6 +96,7 @@ describe("raw writer", () => {
         turnId: "t1",
         turnIndex: 1,
         role: "user",
+        createdAt: "2026-05-09T05:06:07.890Z",
         originalText: "Realtime GitMD mirror should write this raw once."
       });
       const replay = writer.write({
@@ -103,16 +104,21 @@ describe("raw writer", () => {
         turnId: "t1",
         turnIndex: 1,
         role: "user",
+        createdAt: "2026-05-09T05:06:07.890Z",
         originalText: "Realtime GitMD mirror should write this raw once."
       });
       const markdownFiles = listFiles(join(dir, "raw")).filter((path) => path.endsWith(".md"));
       const manifest = JSON.parse(readFileSync(join(dir, "manifest.json"), "utf8")) as { agent_id: string };
+      const ignore = readFileSync(join(dir, ".gitignore"), "utf8");
 
       expect(first.ok).toBe(true);
       expect(replay.messageId).toBe(first.messageId);
       expect(markdownFiles).toHaveLength(1);
+      expect(basename(markdownFiles[0])).toMatch(/^20260509T050607Z-00000001-raw_[A-Za-z0-9_-]+\.md$/u);
       expect(readFileSync(markdownFiles[0], "utf8")).toContain("Realtime GitMD mirror should write this raw once.");
       expect(manifest.agent_id).toBe("agent-1");
+      expect(ignore).toContain("!raw/**");
+      expect(ignore).toContain("!manifest.json");
     } finally {
       connection.close();
       rmSync(dir, { recursive: true, force: true });

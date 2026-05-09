@@ -4,6 +4,17 @@ import type { RawMessage } from "../types.js";
 import { MarkdownRenderer } from "./MarkdownRenderer.js";
 import { Redactor } from "./Redactor.js";
 
+const GITMD_GITIGNORE = `*
+!.gitignore
+!manifest.json
+!raw/
+!raw/**
+!timeline/
+!timeline/**
+!exports/
+!exports/**
+`;
+
 interface GitMdManifest {
   format?: string;
   agent_id?: string;
@@ -15,6 +26,11 @@ interface GitMdManifest {
 
 export function ensureGitMdManifest(input: { agentId: string; memoryRepoPath: string }) {
   mkdirSync(input.memoryRepoPath, { recursive: true });
+  const ignorePath = join(input.memoryRepoPath, ".gitignore");
+  if (!existsSync(ignorePath)) {
+    writeFileSync(ignorePath, GITMD_GITIGNORE, "utf8");
+  }
+
   const manifestPath = join(input.memoryRepoPath, "manifest.json");
   if (!existsSync(manifestPath)) {
     writeFileSync(
@@ -95,7 +111,11 @@ export class GitMdWriter {
     const year = String(date.getUTCFullYear());
     const month = String(date.getUTCMonth() + 1).padStart(2, "0");
     const day = String(date.getUTCDate()).padStart(2, "0");
+    const hour = String(date.getUTCHours()).padStart(2, "0");
+    const minute = String(date.getUTCMinutes()).padStart(2, "0");
+    const second = String(date.getUTCSeconds()).padStart(2, "0");
+    const secondStamp = `${year}${month}${day}T${hour}${minute}${second}Z`;
     const sequence = String(message.sequence).padStart(8, "0");
-    return join(this.memoryRepoPath, "raw", year, month, day, `${sequence}-${message.messageId}.md`);
+    return join(this.memoryRepoPath, "raw", year, month, day, `${secondStamp}-${sequence}-${message.messageId}.md`);
   }
 }

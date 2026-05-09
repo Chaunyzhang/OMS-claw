@@ -52,6 +52,8 @@ export interface BuildInfo {
 
 export interface OmsConfig {
   agentId: string;
+  agentUid?: string;
+  agentPathId: string;
   mode: OmsMode;
   dbPath: string;
   memoryRepoPath?: string;

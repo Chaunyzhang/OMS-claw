@@ -14,19 +14,53 @@ OMS 的长期记忆必须按 agent 隔离。隔离对象包括：
 
 ```text
 baseDir = ~/.openclaw/oms
-dbPath = ~/.openclaw/oms/<agentId-safe>.sqlite
-memoryRepoPath = ~/.openclaw/oms/<agentId-safe>/gitmd
+dbPath = ~/.openclaw/oms/<agentPathId>.sqlite
+memoryRepoPath = ~/.openclaw/oms/<agentPathId>/gitmd
 ```
 
-其中 `<agentId-safe>` 是把 `agentId` 转成路径安全名称后的值。比如：
+其中 `<agentPathId>` 是把 `agentId` 转成路径安全名称，并追加 UID/hash 后缀后的值。比如：
 
 ```text
 agentId = agent/main
-dbPath = ~/.openclaw/oms/agent-main.sqlite
-memoryRepoPath = ~/.openclaw/oms/agent-main/gitmd
+agentPathId = agent-main-<10位hash>
+dbPath = ~/.openclaw/oms/agent-main-<10位hash>.sqlite
+memoryRepoPath = ~/.openclaw/oms/agent-main-<10位hash>/gitmd
 ```
 
 这解决的是“一 agent 一 sqlite，一 agent 一 GitMD 脑包”。
+
+## Agent 命名规则
+
+OMS 区分三件事：
+
+1. `agentId`：逻辑身份，写进 sqlite row 和 GitMD manifest，可以是中文，例如 `小白`。
+2. `agentUid`：宿主如果提供稳定 UID，OMS 用它防重名；宿主暂未提供时，OMS 用 `sha256(agentId)` 的前 10 位作为派生 UID。
+3. `agentPathId`：磁盘目录名，由 `agentId` 的拼音/ASCII slug 加 UID/hash 后缀组成。
+
+路径规则：
+
+```text
+agentId = 小白
+agentUid = agent_123
+agentPathId = xiao-bai-agent_123
+memoryRepoPath = ~/.openclaw/oms/xiao-bai-agent_123/gitmd
+```
+
+如果没有 `agentUid`：
+
+```text
+agentId = 小白
+agentPathId = xiao-bai-<10位hash>
+```
+
+同音不同字不会撞：
+
+```text
+小白 -> xiao-bai-<hashA>
+晓白 -> xiao-bai-<hashB>
+```
+
+如果两个 agent 的显示名完全相同，而且宿主没有提供独立 UID，OMS 无法判断它们是不是同一个 agent。生产多 agent 场景必须配置 `agentUid` 或等待 OpenClaw 插件 API 注入宿主 UID。
 
 ## 当前边界
 
@@ -68,7 +102,7 @@ RawWriter.write 成功写入 raw_messages
 目录：
 
 ```text
-~/.openclaw/oms/<agentId-safe>/gitmd
+~/.openclaw/oms/<agentPathId>/gitmd
 ```
 
 内容：
@@ -80,7 +114,7 @@ gitmd/
     YYYY/
       MM/
         DD/
-          00000001-raw_....md
+          YYYYMMDDTHHMMSSZ-00000001-raw_....md
   timeline/
     YYYY/
       MM/
@@ -158,7 +192,8 @@ memoryRepoPath = ~/.openclaw/oms/oms-agent-default/gitmd
       "oms": {
         "enabled": true,
         "config": {
-          "agentId": "main"
+          "agentId": "小白",
+          "agentUid": "openclaw-agent-uuid-or-stable-id"
         }
       }
     }
@@ -169,8 +204,8 @@ memoryRepoPath = ~/.openclaw/oms/oms-agent-default/gitmd
 如果 OpenClaw 是每个 agent 单独加载 plugin config，则每个 agent 配自己的：
 
 ```text
-agent main -> agentId main -> main.sqlite -> main/gitmd
-agent work -> agentId work -> work.sqlite -> work/gitmd
+agent main -> agentId main -> main-<uid/hash>.sqlite -> main-<uid/hash>/gitmd
+agent 小白 -> agentId 小白 -> xiao-bai-<uid/hash>.sqlite -> xiao-bai-<uid/hash>/gitmd
 ```
 
 ## 后续必须补的宿主级防线
@@ -179,12 +214,12 @@ agent work -> agentId work -> work.sqlite -> work/gitmd
 
 - 默认 GitMD 路径按 OMS `agentId` 隔离。
 - GitMD manifest owner 不匹配时拒绝导出。
-- `agentId` 转路径安全名称，避免路径穿越。
+- `agentId` 转拼音/ASCII 路径安全名称，并追加 UID/hash 后缀，避免路径穿越和同音重名。
 - 检测到 OpenClaw 多 agent 配置但 OMS 未显式设置 `agentId` 时 fail closed。
 
 后续需要 OpenClaw 宿主配合做到：
 
-1. 插件注册时提供宿主 agent id。
+1. 插件注册时提供宿主 agent id 和宿主稳定 UID。
 2. OMS 没有显式 `agentId` 时，从宿主 agent id 派生。
 3. 多 agent 环境下禁止使用 `oms-agent-default`，当前已用配置检测先 fail closed。
 4. 启动时检查 sqlite manifest owner，不匹配则拒绝打开。
@@ -193,14 +228,16 @@ agent work -> agentId work -> work.sqlite -> work/gitmd
 
 必须有自动化测试：
 
-1. `agentId=agent/main` 时，默认路径为 `agent-main.sqlite` 和 `agent-main/gitmd`。
+1. `agentId=agent/main` 时，默认路径为 `agent-main-<hash>.sqlite` 和 `agent-main-<hash>/gitmd`。
 2. 显式 `memoryRepoPath` 不被默认规则覆盖。
 3. 多 agent OpenClaw config 缺少 OMS `agentId` 时抛出 `oms_agent_id_required_for_multi_agent_openclaw_config`。
 4. 首次 GitMD 导出会创建 `oms-gitmd-v1` manifest。
 5. agent-b 不能写入 agent-a 的 GitMD。
 6. manifest 损坏时拒绝导出。
-7. raw 写入成功后立即生成 `gitmd/raw/YYYY/MM/DD/*.md`。
+7. raw 写入成功后立即生成 `gitmd/raw/YYYY/MM/DD/YYYYMMDDTHHMMSSZ-00000001-raw_....md`。
 8. 同一 raw 重放不会重复生成 Markdown。
+9. 中文 `agentId=小白` 时默认路径为 `xiao-bai-<hash>`。
+10. 同音不同字 `小白` / `晓白` 生成不同 `agentPathId`。
 
 ## 不做的事
 
@@ -210,6 +247,7 @@ agent work -> agentId work -> work.sqlite -> work/gitmd
 - 不把 sqlite 放进 GitMD。
 - 不支持默认共享 DB。
 - 不把 agent 隔离交给人工约定。
+- 不把一个 agent 的记忆静默导入另一个 agent；导入必须显式记录 provenance。
 
 核心原则：
 

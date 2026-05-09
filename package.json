@@ -23,7 +23,8 @@
     ]
   },
   "dependencies": {
-    "gpt-tokenizer": "^2.5.0"
+    "gpt-tokenizer": "^2.5.0",
+    "pinyin-pro": "^3.28.1"
   },
   "devDependencies": {
     "@agentclientprotocol/sdk": "^0.21.0",

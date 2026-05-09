@@ -33,6 +33,7 @@ import { SQLRRFusion } from "../retrieval/SQLRRFusion.js";
 import { QueryIntentClassifier } from "../retrieval/QueryIntentClassifier.js";
 import { GitMdWriter } from "../git/GitMdWriter.js";
 import { TimelineExporter } from "../git/TimelineExporter.js";
+import { GitMdImporter } from "../git/GitMdImporter.js";
 import { RuntimeAttestation } from "./RuntimeAttestation.js";
 import { TaskQueue } from "./TaskQueue.js";
 import { Logger } from "./Logger.js";
@@ -451,6 +452,19 @@ export class OmsOrchestrator {
       memoryRepoPath: this.config.memoryRepoPath,
       messages,
       force: params.force === true
+    });
+  }
+
+  gitImportTool(params: Record<string, unknown> = {}) {
+    if (typeof params.sourceRepoPath !== "string" || params.sourceRepoPath.trim().length === 0) {
+      return { ok: false, reason: "source_repo_path_required" };
+    }
+    return new GitMdImporter(this.rawMessages, this.rawWriter, this.events).import({
+      targetAgentId: this.config.agentId,
+      sourceRepoPath: params.sourceRepoPath,
+      mode: typeof params.mode === "string" ? params.mode : undefined,
+      duplicatePolicy: typeof params.duplicatePolicy === "string" ? params.duplicatePolicy : undefined,
+      limit: params.limit === undefined ? undefined : Number(params.limit)
     });
   }
 

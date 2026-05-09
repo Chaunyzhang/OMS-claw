@@ -1,7 +1,7 @@
 import { describe, expect, it } from "vitest";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, resolve } from "node:path";
+import { basename, join, resolve } from "node:path";
 import { createDefaultConfig } from "../../src/core/ConfigResolver.js";
 
 describe("config resolver", () => {
@@ -12,8 +12,58 @@ describe("config resolver", () => {
       const config = createDefaultConfig({ baseDir, openclawConfigPath: join(baseDir, "missing-openclaw.json"), agentId: "agent/main" });
 
       expect(config.agentId).toBe("agent/main");
-      expect(config.dbPath).toBe(resolve(join(baseDir, "agent-main.sqlite")));
-      expect(config.memoryRepoPath).toBe(resolve(join(baseDir, "agent-main", "gitmd")));
+      expect(basename(config.dbPath)).toMatch(/^agent-main-[a-f0-9]{10}\.sqlite$/u);
+      expect(config.memoryRepoPath).toBe(resolve(join(baseDir, config.agentPathId, "gitmd")));
+      expect(config.agentPathId).toMatch(/^agent-main-[a-f0-9]{10}$/u);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it("transliterates Chinese agent names and disambiguates same-pinyin names", () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "oms-agent-paths-"));
+
+    try {
+      const xiaobai = createDefaultConfig({ baseDir, openclawConfigPath: join(baseDir, "missing-openclaw.json"), agentId: "小白" });
+      const altXiaobai = createDefaultConfig({ baseDir, openclawConfigPath: join(baseDir, "missing-openclaw.json"), agentId: "晓白" });
+
+      expect(xiaobai.agentId).toBe("小白");
+      expect(xiaobai.agentPathId).toMatch(/^xiao-bai-[a-f0-9]{10}$/u);
+      expect(altXiaobai.agentPathId).toMatch(/^xiao-bai-[a-f0-9]{10}$/u);
+      expect(altXiaobai.agentPathId).not.toBe(xiaobai.agentPathId);
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it("uses an explicit agent uid as the path suffix when provided", () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "oms-agent-paths-"));
+
+    try {
+      const config = createDefaultConfig({
+        baseDir,
+        openclawConfigPath: join(baseDir, "missing-openclaw.json"),
+        agentId: "小白",
+        agentUid: "agent_123"
+      });
+
+      expect(config.agentPathId).toBe("xiao-bai-agent_123");
+      expect(config.memoryRepoPath).toBe(resolve(join(baseDir, "xiao-bai-agent_123", "gitmd")));
+    } finally {
+      rmSync(baseDir, { recursive: true, force: true });
+    }
+  });
+
+  it("infers a singleton OpenClaw agents.list id when plugin agentId is absent", () => {
+    const baseDir = mkdtempSync(join(tmpdir(), "oms-agent-paths-"));
+    const openclawConfigPath = join(baseDir, "openclaw.json");
+    writeFileSync(openclawConfigPath, JSON.stringify({ agents: { list: [{ id: "main" }] } }), "utf8");
+
+    try {
+      const config = createDefaultConfig({ baseDir, openclawConfigPath });
+
+      expect(config.agentId).toBe("main");
+      expect(config.agentPathId).toMatch(/^main-[a-f0-9]{10}$/u);
     } finally {
       rmSync(baseDir, { recursive: true, force: true });
     }

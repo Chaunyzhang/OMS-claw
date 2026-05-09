@@ -1,30 +1,65 @@
+import { createHash } from "node:crypto";
 import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
+import { pinyin } from "pinyin-pro";
 import type { OmsConfig, OmsMode } from "../types.js";
 
 const DEFAULT_AGENT_ID = "oms-agent-default";
+const AGENT_PATH_ID_MAX_LENGTH = 80;
 
-function pathSafeAgentId(agentId: string): string {
-  return (
-    agentId
-      .normalize("NFKC")
-      .trim()
-      .replace(/[^A-Za-z0-9_.-]+/gu, "-")
-      .replace(/^-+|-+$/gu, "")
-      .slice(0, 80) || DEFAULT_AGENT_ID
+interface OpenClawAgentConfig {
+  id?: unknown;
+  name?: unknown;
+}
+
+interface OpenClawConfigShape {
+  agents?: {
+    list?: OpenClawAgentConfig[];
+  };
+}
+
+function transliterateHan(input: string): string {
+  return input.replace(/\p{Script=Han}+/gu, (segment) =>
+    (pinyin(segment, { toneType: "none", type: "array" }) as string[]).join("-")
   );
 }
 
-function configuredOpenClawAgentCount(configPath: string): number | undefined {
+function slugifyAgentPathPart(value: string, fallback: string): string {
+  return (
+    transliterateHan(value.normalize("NFKC").trim())
+      .toLowerCase()
+      .replace(/[^a-z0-9_.-]+/gu, "-")
+      .replace(/-+/gu, "-")
+      .replace(/^-+|-+$/gu, "")
+      .slice(0, AGENT_PATH_ID_MAX_LENGTH) || fallback
+  );
+}
+
+function hashAgentIdentity(agentId: string): string {
+  return createHash("sha256").update(agentId.normalize("NFKC"), "utf8").digest("hex").slice(0, 10);
+}
+
+export function pathSafeAgentId(agentId: string, agentUid?: string): string {
+  const normalizedAgentId = agentId.normalize("NFKC").trim() || DEFAULT_AGENT_ID;
+  if (normalizedAgentId === DEFAULT_AGENT_ID && !agentUid) {
+    return DEFAULT_AGENT_ID;
+  }
+
+  const label = slugifyAgentPathPart(normalizedAgentId, "agent");
+  const suffix = agentUid ? slugifyAgentPathPart(agentUid, hashAgentIdentity(normalizedAgentId)) : hashAgentIdentity(normalizedAgentId);
+  const baseMaxLength = Math.max(1, AGENT_PATH_ID_MAX_LENGTH - suffix.length - 1);
+  const base = label.slice(0, baseMaxLength).replace(/[-_.]+$/gu, "") || "agent";
+  return `${base}-${suffix}`;
+}
+
+function readOpenClawAgents(configPath: string): OpenClawAgentConfig[] | undefined {
   if (!existsSync(configPath)) {
     return undefined;
   }
   try {
-    const config = JSON.parse(readFileSync(configPath, "utf8")) as {
-      agents?: { list?: unknown[] };
-    };
-    return Array.isArray(config.agents?.list) ? config.agents.list.length : undefined;
+    const config = JSON.parse(readFileSync(configPath, "utf8")) as OpenClawConfigShape;
+    return Array.isArray(config.agents?.list) ? config.agents.list : undefined;
   } catch {
     return undefined;
   }
@@ -35,8 +70,14 @@ function resolveAgentId(input: Record<string, unknown>): string {
     return input.agentId.trim();
   }
   const configPath = resolve(String(input.openclawConfigPath ?? join(homedir(), ".openclaw", "openclaw.json")));
-  const agentCount = configuredOpenClawAgentCount(configPath);
-  if (agentCount !== undefined && agentCount > 1 && input.allowDefaultAgentId !== true) {
+  const agents = readOpenClawAgents(configPath);
+  if (agents?.length === 1) {
+    const agentId = agents[0]?.id ?? agents[0]?.name;
+    if (typeof agentId === "string" && agentId.trim().length > 0) {
+      return agentId.trim();
+    }
+  }
+  if (agents !== undefined && agents.length > 1 && input.allowDefaultAgentId !== true) {
     throw new Error("oms_agent_id_required_for_multi_agent_openclaw_config");
   }
   return DEFAULT_AGENT_ID;
@@ -62,7 +103,8 @@ export function createDefaultConfig(input: Record<string, unknown> = {}): OmsCon
   const baseDir = resolve(String(input.baseDir ?? join(homedir(), ".openclaw", "oms")));
   mkdirSync(baseDir, { recursive: true });
   const agentId = resolveAgentId(input);
-  const agentPathId = pathSafeAgentId(agentId);
+  const agentUid = typeof input.agentUid === "string" && input.agentUid.trim().length > 0 ? input.agentUid.trim() : undefined;
+  const agentPathId = pathSafeAgentId(agentId, agentUid);
   const dbPathInput = String(input.dbPath ?? join(baseDir, `${agentPathId}.sqlite`));
   const dbPath = dbPathInput === ":memory:" ? ":memory:" : resolve(dbPathInput);
   const memoryRepoPath = input.memoryRepoPath === undefined ? join(baseDir, agentPathId, "gitmd") : resolve(String(input.memoryRepoPath));
@@ -75,6 +117,8 @@ export function createDefaultConfig(input: Record<string, unknown> = {}): OmsCon
 
   return {
     agentId,
+    agentUid,
+    agentPathId,
     mode: asMode(input.mode),
     dbPath,
     memoryRepoPath,

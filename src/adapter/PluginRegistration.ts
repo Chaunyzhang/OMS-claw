@@ -152,6 +152,20 @@ function registerTools(api: OpenClawPluginApi, orchestrator: OmsOrchestrator): v
       "Export redacted raw timeline Markdown to the configured memory repo.",
       jsonSchema({ limit: { type: "number" }, force: { type: "boolean" } }),
       (_id, params) => asToolResponse(orchestrator.gitExportTool(params))
+    ),
+    tool(
+      "oms_git_import",
+      "Import another agent's GitMD brainpack into the current agent with provenance. Preview by default.",
+      jsonSchema(
+        {
+          sourceRepoPath: { type: "string" },
+          mode: { type: "string", enum: ["preview", "import"], default: "preview" },
+          duplicatePolicy: { type: "string", enum: ["skip", "force", "import_as_reference"], default: "skip" },
+          limit: { type: "number", default: 10000 }
+        },
+        ["sourceRepoPath"]
+      ),
+      (_id, params) => asToolResponse(orchestrator.gitImportTool(params))
     )
   ];
 
