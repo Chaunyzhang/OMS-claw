@@ -48,7 +48,7 @@ export class ContextAssembler {
       "## OMS OpenClaw Memory",
       OMS_RECALL_POLICY_PROMPT,
       "",
-      "Use OMS tools before answering questions about prior conversation facts, dates, people, corrections, or formal memory tests.",
+      "Use OMS naturally whenever you need to remember prior conversation facts, dates, people, corrections, commitments, preferences, project decisions, or formal memory tests.",
       "For formal memory tests, call oms_summary_search first with the exact question text, then call oms_expand_evidence on a summary hit before answering.",
       "Do not answer from oms_fts_search alone in formal memory tests; FTS is only a fallback when summary navigation is empty.",
       "If authoritative raw evidence is not available, say no traceable authoritative raw evidence was found."
@@ -62,6 +62,11 @@ export class ContextAssembler {
       lines.push(
         "",
         "Available OMS path: oms_summary_search -> oms_expand_evidence is the required path for formal memory tests; oms_fts_search is fallback only after summary navigation is empty."
+      );
+    } else {
+      lines.push(
+        "",
+        "If OMS tool names are not visible in this session's tool list, report that OMS tools are unavailable in this session instead of claiming OMS is not installed or that no memory exists."
       );
     }
 

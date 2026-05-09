@@ -46,6 +46,8 @@ function registerTool(api: OpenClawPluginApi, definition: OpenClawToolDefinition
 const evidencePolicyDescription =
   "Policy selector. Use general_history for ordinary prior conversation and timeline recall. Use assistant_history only when the user asks what the assistant previously said or promised. Use material_evidence only for OMS_CAPTURE/material_corpus/case-pack evidence, usually with caseId. Use diagnostic_history only for debugging prior OMS failures.";
 
+const OMS_RECALL_TOOL_NAMES = ["oms_summary_search", "oms_search", "oms_retrieve", "oms_expand_evidence", "oms_fts_search"] as const;
+
 const retrievalToolParameters = jsonSchema(
   {
     query: { type: "string" },
@@ -259,25 +261,22 @@ function hasAvailableTool(availableTools: unknown, name: string): boolean {
   return false;
 }
 
-function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode?: string } = {}): string[] {
-  const hasOmsTools =
-    hasAvailableTool(params.availableTools, "oms_summary_search") ||
-    hasAvailableTool(params.availableTools, "oms_search") ||
-    hasAvailableTool(params.availableTools, "oms_retrieve") ||
-    hasAvailableTool(params.availableTools, "oms_expand_evidence") ||
-    hasAvailableTool(params.availableTools, "oms_fts_search");
-  if (!hasOmsTools) {
-    return [];
-  }
-
+export function buildOmsPromptSection(params: { availableTools?: unknown; citationsMode?: string } = {}): string[] {
+  const hasOmsTools = OMS_RECALL_TOOL_NAMES.some((name) => hasAvailableTool(params.availableTools, name));
   const lines = [
     "## OMS Memory Recall",
-    "Before answering prior-conversation facts, dates, corrections, or formal memory tests, use OMS memory tools.",
+    "OMS is your system-level long-term memory for prior visible conversation. Treat it as part of your own memory, not as an optional external plugin.",
+    "Before answering prior-conversation facts, dates, corrections, commitments, preferences, project decisions, or formal memory tests, use OMS memory tools when they are available.",
     "For formal tests, call oms_search with the exact question text in high or ultra mode before answering.",
     "Evidence policy: use general_history for ordinary prior conversation, including first/last messages and formal memory tests over chat history. Use material_evidence only for OMS_CAPTURE/material_corpus/case-pack evidence and include caseId when known. Use assistant_history only for what the assistant previously said or promised. Use diagnostic_history only for debugging prior OMS failures.",
     "Do not use material_evidence for ordinary chat just because the user says formal test, benchmark, or first messages. When expanding known messageIds or summaryIds from normal chat, pass evidencePolicy=general_history even in high/ultra mode.",
     "Answer only when oms_search or oms_expand_evidence returns a delivered raw evidence packet. Candidate lanes, summaries, embeddings, graph labels, and snippets are not evidence."
   ];
+  if (!hasOmsTools) {
+    lines.push(
+      "If OMS tool names are not visible in this session's tool list, say the OMS tools are unavailable in this session instead of claiming the OMS plugin is not installed or that no memory exists."
+    );
+  }
   if (params.citationsMode === "off") {
     lines.push("Citations are disabled: do not mention internal paths unless the user explicitly asks.");
   } else {
