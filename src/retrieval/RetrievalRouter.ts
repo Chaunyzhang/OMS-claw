@@ -10,7 +10,9 @@ import { AnnVectorLane } from "./lanes/AnnVectorLane.js";
 import { FTS5Bm25Lane } from "./lanes/FTS5Bm25Lane.js";
 import { GraphCteLane } from "./lanes/GraphCteLane.js";
 import { SummaryDagLane } from "./lanes/SummaryDagLane.js";
+import { TimelineLane } from "./lanes/TimelineLane.js";
 import { TrigramLane } from "./lanes/TrigramLane.js";
+import { isTimelineRecallQuery } from "./RecallIntent.js";
 
 function canonicalMode(mode: OmsMode): OmsMode {
   return mode === "xhigh" ? "ultra" : mode;
@@ -32,6 +34,7 @@ export class RetrievalRouter {
     private readonly summaryLane: SummaryDagLane,
     private readonly annLane: AnnVectorLane,
     private readonly graphLane: GraphCteLane,
+    private readonly timelineLane: TimelineLane,
     private readonly fusion: SQLRRFusion
   ) {}
 
@@ -157,13 +160,15 @@ export class RetrievalRouter {
     limit: number;
     requiredLane?: LaneName;
   }): Promise<CandidateLaneResult[]> {
+    const timelineRecall = isTimelineRecallQuery(input.query);
     const vectorEnabled = this.config.annEnabled || this.config.ragEnabled;
     const lanes: Array<[LaneName, () => CandidateLaneResult | Promise<CandidateLaneResult>, boolean]> = [
-      ["fts_bm25", () => this.ftsLane.search(input), this.config.ftsEnabled],
-      ["trigram", () => this.trigramLane.search(input), this.config.trigramEnabled && (input.mode === "high" || input.mode === "ultra")],
-      ["summary_dag", () => this.summaryLane.search(input), this.config.summaryEnabled && input.mode !== "low"],
-      ["ann_vector", () => this.annLane.search(input), vectorEnabled && (input.mode === "high" || input.mode === "ultra")],
-      ["graph_cte", () => this.graphLane.search(input), this.config.graphEnabled && input.mode === "ultra"]
+      ["timeline", () => this.timelineLane.search(input), timelineRecall],
+      ["fts_bm25", () => this.ftsLane.search(input), !timelineRecall && this.config.ftsEnabled],
+      ["trigram", () => this.trigramLane.search(input), !timelineRecall && this.config.trigramEnabled && (input.mode === "high" || input.mode === "ultra")],
+      ["summary_dag", () => this.summaryLane.search(input), !timelineRecall && this.config.summaryEnabled && input.mode !== "low"],
+      ["ann_vector", () => this.annLane.search(input), !timelineRecall && vectorEnabled && (input.mode === "high" || input.mode === "ultra")],
+      ["graph_cte", () => this.graphLane.search(input), !timelineRecall && this.config.graphEnabled && input.mode === "ultra"]
     ];
     return Promise.all(
       lanes

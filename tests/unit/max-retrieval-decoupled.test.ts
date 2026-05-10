@@ -287,6 +287,40 @@ describe("SQLite max retrieval decoupled architecture", () => {
     oms.connection.close();
   });
 
+  it("routes broad prior-conversation recall through timeline evidence", async () => {
+    const oms = createOms();
+    const write = (sessionId: string, turnIndex: number, role: "user" | "assistant", originalText: string) =>
+      oms.rawWriter.write({
+        agentId: oms.config.agentId,
+        sessionId,
+        turnIndex,
+        role,
+        sourcePurpose: role === "user" ? "general_chat" : "assistant_final_answer",
+        sourceAuthority: role === "user" ? "visible_transcript" : "assistant_visible_final",
+        originalText
+      });
+    write("agent:main:main", 1, "user", "We planned the Paperclip-style agent company workflow.");
+    write("agent:main:main", 1, "assistant", "Paperclip memory: use issues, agent ownership, and review loops.");
+    write("agent:main:parallel-1", 2, "user", "\u4e4b\u524d\u6211\u4eec\u804a\u4e86\u4ec0\u4e48");
+    write("agent:main:parallel-1", 2, "assistant", "\u6839\u636e\u6211\u7684\u8bb0\u5fc6\uff0c\u6211\u4eec\u53ea\u804a\u4e86 hi\u3002");
+
+    const result = await oms.retrieveTool({
+      query: "\u4e4b\u524d\u6211\u4eec\u804a\u4e86\u4ec0\u4e48",
+      mode: "high",
+      evidencePolicy: "general_history",
+      limit: 5
+    });
+
+    expect(result.ok).toBe(true);
+    expect(result.lanesUsed).toEqual(["timeline"]);
+    expect(result.packet).not.toBeNull();
+    const evidenceText = result.packet!.rawExcerpts.map((excerpt) => excerpt.originalText).join("\n");
+    expect(evidenceText).toContain("Paperclip-style agent company workflow");
+    expect(evidenceText).not.toContain("\u4e4b\u524d\u6211\u4eec\u804a\u4e86\u4ec0\u4e48");
+    expect(evidenceText).not.toContain("\u6839\u636e\u6211\u7684\u8bb0\u5fc6");
+    oms.connection.close();
+  });
+
   it("keeps ANN optional and blocked without an embedding model", async () => {
     const oms = createOms();
     await seedMelanieMaterial(oms);

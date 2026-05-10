@@ -29,6 +29,7 @@ import { TrigramLane } from "../retrieval/lanes/TrigramLane.js";
 import { SummaryDagLane } from "../retrieval/lanes/SummaryDagLane.js";
 import { AnnVectorLane } from "../retrieval/lanes/AnnVectorLane.js";
 import { GraphCteLane } from "../retrieval/lanes/GraphCteLane.js";
+import { TimelineLane } from "../retrieval/lanes/TimelineLane.js";
 import { SQLRRFusion } from "../retrieval/SQLRRFusion.js";
 import { QueryIntentClassifier } from "../retrieval/QueryIntentClassifier.js";
 import { GitMdWriter } from "../git/GitMdWriter.js";
@@ -133,6 +134,7 @@ export class OmsOrchestrator {
       new SummaryDagLane(this.summarySearch, this.sourceEdges, this.rawMessages),
       new AnnVectorLane(config, this.embeddingBuilder, this.embeddings, this.embeddingProvider),
       new GraphCteLane(this.connection.db, this.graph),
+      new TimelineLane(this.rawMessages),
       new SQLRRFusion(this.connection.db)
     );
   }

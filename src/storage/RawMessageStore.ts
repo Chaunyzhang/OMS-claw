@@ -243,6 +243,20 @@ export class RawMessageStore {
       .map((row) => mapRaw(row as Record<string, unknown>));
   }
 
+  recentForAgent(agentId: string, limit = 200): RawMessage[] {
+    return this.db
+      .prepare(
+        `SELECT rm.*, t.turn_index
+         FROM raw_messages rm
+         LEFT JOIN turns t ON t.turn_id = rm.turn_id
+         WHERE rm.agent_id = ?
+         ORDER BY rm.sequence DESC
+         LIMIT ?`
+      )
+      .all(agentId, limit)
+      .map((row) => mapRaw(row as Record<string, unknown>));
+  }
+
   allForSession(agentId: string, sessionId: string, limit = 10000): RawMessage[] {
     return this.db
       .prepare(
