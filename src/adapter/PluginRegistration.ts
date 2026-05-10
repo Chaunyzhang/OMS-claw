@@ -2,9 +2,11 @@ import { basename, dirname } from "node:path";
 import { Logger } from "../core/Logger.js";
 import { OmsOrchestrator } from "../core/OmsOrchestrator.js";
 import { OmsRuntimeRegistry } from "../core/OmsRuntimeRegistry.js";
+import { isProactiveRecallQuery, isTimelineRecallQuery } from "../retrieval/RecallIntent.js";
 import { controlPanelContract } from "../ui/ControlPanelContract.js";
 import { asToolResponse, jsonSchema } from "./OpenClawDiplomat.js";
 import type { OpenClawPluginApi, OpenClawToolDefinition } from "./OpenClawTypes.js";
+import type { EvidencePacket } from "../types.js";
 
 function tool(name: string, description: string, parameters: Record<string, unknown>, execute: OpenClawToolDefinition["execute"]): OpenClawToolDefinition {
   return { name, description, parameters, execute };
@@ -38,6 +40,91 @@ function availableToolsFrom(event: Record<string, unknown>, ctx: Record<string, 
   return undefined;
 }
 
+function truncate(text: string, maxChars: number): string {
+  return text.length <= maxChars ? text : `${text.slice(0, Math.max(0, maxChars - 3))}...`;
+}
+
+function textFromMessagePart(part: unknown): string {
+  if (typeof part === "string") {
+    return part;
+  }
+  const record = asRecord(part);
+  if (typeof record.text === "string") {
+    return record.text;
+  }
+  if (typeof record.content === "string") {
+    return record.content;
+  }
+  return "";
+}
+
+function messageText(message: unknown): string {
+  const record = asRecord(message);
+  const content = record.content ?? record.text ?? record.message;
+  if (Array.isArray(content)) {
+    return content.map(textFromMessagePart).filter(Boolean).join("\n").trim();
+  }
+  return textFromMessagePart(content).trim();
+}
+
+function latestUserMessageText(messages: unknown[]): string | undefined {
+  for (let index = messages.length - 1; index >= 0; index -= 1) {
+    const message = asRecord(messages[index]);
+    if (message.role === "user") {
+      const text = messageText(message);
+      if (text.length > 0) {
+        return text;
+      }
+    }
+  }
+  return undefined;
+}
+
+function formatPreloadedEvidencePacket(input: { agentId: string; query: string; packet: EvidencePacket }): string {
+  const lines = [
+    "## OMS Preloaded Memory Evidence",
+    "OMS already retrieved this delivered raw evidence packet before the model response. Treat it as your own traceable memory evidence.",
+    `agentId: ${input.agentId}`,
+    `query: ${truncate(input.query, 180)}`,
+    `packetId: ${input.packet.packetId}`,
+    `sourceRoutes: ${(input.packet.sourceRoutes ?? []).join(", ") || "unknown"}`,
+    "Use only these raw excerpts for prior-conversation claims unless you call OMS again and receive another delivered packet."
+  ];
+  for (const excerpt of input.packet.rawExcerpts.slice(0, 8)) {
+    const turn = Number.isFinite(excerpt.turnIndex) ? excerpt.turnIndex : "?";
+    lines.push(
+      `- seq ${excerpt.sequence} turn ${turn} ${excerpt.role} (${excerpt.sourcePurpose}): ${truncate(excerpt.originalText.replace(/\s+/gu, " ").trim(), 700)}`
+    );
+  }
+  lines.push("");
+  return lines.join("\n");
+}
+
+async function buildPreloadedMemoryEvidence(orchestrator: OmsOrchestrator, input: { query?: string; sessionId: string }): Promise<string> {
+  const query = input.query?.trim();
+  if (!query || !isProactiveRecallQuery(query)) {
+    return "";
+  }
+  const result = await orchestrator.retrieveTool({
+    query,
+    evidencePolicy: "general_history",
+    mode: "high",
+    sessionId: input.sessionId,
+    limit: isTimelineRecallQuery(query) ? 6 : 8
+  });
+  if (result.ok && result.packet?.status === "delivered") {
+    return formatPreloadedEvidencePacket({ agentId: orchestrator.config.agentId, query, packet: result.packet });
+  }
+  return [
+    "## OMS Preloaded Memory Evidence",
+    "OMS proactively checked memory for this prior-conversation query, but no delivered raw evidence packet was found.",
+    `agentId: ${orchestrator.config.agentId}`,
+    `query: ${truncate(query, 180)}`,
+    `reason: ${result.reason ?? result.packet?.reason ?? "no_authoritative_raw_evidence"}`,
+    ""
+  ].join("\n");
+}
+
 function registerRuntimeTool(
   api: OpenClawPluginApi,
   runtime: OmsRuntimeRegistry,
@@ -66,7 +153,7 @@ const retrievalToolParameters = jsonSchema(
     },
     caseId: { type: "string", description: "Only use with material_evidence for OMS_CAPTURE/material_corpus case packs." },
     sessionId: { type: "string" },
-    requiredLane: { type: "string", enum: ["fts_bm25", "trigram", "summary_dag", "ann_vector", "graph_cte"] },
+    requiredLane: { type: "string", enum: ["fts_bm25", "trigram", "summary_dag", "ann_vector", "graph_cte", "timeline"] },
     limit: { type: "number", default: 20 }
   },
   ["query"]
@@ -259,12 +346,17 @@ function registerRuntimeHooks(api: OpenClawPluginApi, runtime: OmsRuntimeRegistr
           messages: Array.isArray(event.messages) ? event.messages : [],
           availableTools: availableToolsFrom(event, ctx)
         });
-        if (!assembled.systemPromptAddition.trim()) {
+        const preloadedEvidence = await buildPreloadedMemoryEvidence(orchestrator, {
+          query: Array.isArray(event.messages) ? latestUserMessageText(event.messages) : undefined,
+          sessionId: sessionIdFrom(event, ctx)
+        });
+        const systemPromptAddition = [assembled.systemPromptAddition, preloadedEvidence].filter((section) => section.trim()).join("\n");
+        if (!systemPromptAddition.trim()) {
           return;
         }
         return {
-          prependSystemContext: assembled.systemPromptAddition,
-          prependContext: assembled.systemPromptAddition
+          prependSystemContext: systemPromptAddition,
+          prependContext: systemPromptAddition
         };
       } catch (error) {
         logger.warn("oms before_prompt_build hook failed", {
@@ -326,6 +418,7 @@ export function buildOmsPromptSection(params: { availableTools?: unknown; citati
     "For formal tests, call oms_search with the exact question text in high or ultra mode before answering.",
     "Evidence policy: use general_history for ordinary prior conversation, including first/last messages and formal memory tests over chat history. Use material_evidence only for OMS_CAPTURE/material_corpus/case-pack evidence and include caseId when known. Use assistant_history only for what the assistant previously said or promised. Use diagnostic_history only for debugging prior OMS failures.",
     "Do not use material_evidence for ordinary chat just because the user says formal test, benchmark, or first messages. When expanding known messageIds or summaryIds from normal chat, pass evidencePolicy=general_history even in high/ultra mode.",
+    "If an ## OMS Preloaded Memory Evidence block is present, it is already a delivered raw evidence packet and may be used directly as memory evidence.",
     "Answer only when oms_search or oms_expand_evidence returns a delivered raw evidence packet. Candidate lanes, summaries, embeddings, graph labels, and snippets are not evidence."
   ];
   if (!hasOmsTools) {

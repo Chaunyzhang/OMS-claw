@@ -49,6 +49,7 @@ export class ContextAssembler {
       OMS_RECALL_POLICY_PROMPT,
       "",
       "Use OMS naturally whenever you need to remember prior conversation facts, dates, people, corrections, commitments, preferences, project decisions, or formal memory tests.",
+      "If an OMS Preloaded Memory Evidence block is present, treat it as already-delivered raw memory evidence.",
       "For formal memory tests, call oms_summary_search first with the exact question text, then call oms_expand_evidence on a summary hit before answering.",
       "Do not answer from oms_fts_search alone in formal memory tests; FTS is only a fallback when summary navigation is empty.",
       "If authoritative raw evidence is not available, say no traceable authoritative raw evidence was found."
