@@ -2,6 +2,7 @@ import { basename, dirname } from "node:path";
 import { Logger } from "../core/Logger.js";
 import { OmsOrchestrator } from "../core/OmsOrchestrator.js";
 import { OmsRuntimeRegistry } from "../core/OmsRuntimeRegistry.js";
+import { OMS_MEMORY_REFLEX_PROMPT } from "../context/RecallPolicyPrompt.js";
 import { isProactiveRecallQuery, isTimelineRecallQuery } from "../retrieval/RecallIntent.js";
 import { controlPanelContract } from "../ui/ControlPanelContract.js";
 import { asToolResponse, jsonSchema } from "./OpenClawDiplomat.js";
@@ -414,8 +415,9 @@ export function buildOmsPromptSection(params: { availableTools?: unknown; citati
   const lines = [
     "## OMS Memory Recall",
     "OMS is your system-level long-term memory for prior visible conversation. Treat it as part of your own memory, not as an optional external plugin.",
-    "Before answering prior-conversation facts, dates, corrections, commitments, preferences, project decisions, or formal memory tests, use OMS memory tools when they are available.",
-    "For formal tests, call oms_search with the exact question text in high or ultra mode before answering.",
+    OMS_MEMORY_REFLEX_PROMPT,
+    "Before answering, decide whether the current task may depend on prior conversation facts, dates, corrections, commitments, preferences, project decisions, or formal memory tests.",
+    "Use oms_search as the first recall path for ordinary memory questions and continuity-sensitive work; it may route through timeline, summaries, FTS, vectors, or graph and return raw evidence.",
     "Evidence policy: use general_history for ordinary prior conversation, including first/last messages and formal memory tests over chat history. Use material_evidence only for OMS_CAPTURE/material_corpus/case-pack evidence and include caseId when known. Use assistant_history only for what the assistant previously said or promised. Use diagnostic_history only for debugging prior OMS failures.",
     "Do not use material_evidence for ordinary chat just because the user says formal test, benchmark, or first messages. When expanding known messageIds or summaryIds from normal chat, pass evidencePolicy=general_history even in high/ultra mode.",
     "If an ## OMS Preloaded Memory Evidence block is present, it is already a delivered raw evidence packet and may be used directly as memory evidence.",

@@ -1,7 +1,7 @@
 import { RawMessageStore } from "../storage/RawMessageStore.js";
 import type { OmsConfig } from "../types.js";
 import { ContextBridge } from "./ContextBridge.js";
-import { OMS_RECALL_POLICY_PROMPT } from "./RecallPolicyPrompt.js";
+import { OMS_MEMORY_REFLEX_PROMPT, OMS_RECALL_POLICY_PROMPT } from "./RecallPolicyPrompt.js";
 import { hasDetectedSecrets } from "../ingest/SecretScanner.js";
 
 interface AssembleInput {
@@ -47,11 +47,12 @@ export class ContextAssembler {
     const lines = [
       "## OMS OpenClaw Memory",
       OMS_RECALL_POLICY_PROMPT,
+      OMS_MEMORY_REFLEX_PROMPT,
       "",
-      "Use OMS naturally whenever you need to remember prior conversation facts, dates, people, corrections, commitments, preferences, project decisions, or formal memory tests.",
+      "Use OMS naturally whenever prior memory may change the answer, not only when the user uses explicit memory words.",
       "If an OMS Preloaded Memory Evidence block is present, treat it as already-delivered raw memory evidence.",
-      "For formal memory tests, call oms_summary_search first with the exact question text, then call oms_expand_evidence on a summary hit before answering.",
-      "Do not answer from oms_fts_search alone in formal memory tests; FTS is only a fallback when summary navigation is empty.",
+      "Use oms_search as the first recall path for ordinary memory questions; it may route through timeline, summaries, FTS, vectors, or graph and return raw evidence.",
+      "Use oms_expand_evidence when you only have a summary/raw id candidate and need an authoritative raw evidence packet.",
       "If authoritative raw evidence is not available, say no traceable authoritative raw evidence was found."
     ];
 
@@ -62,7 +63,7 @@ export class ContextAssembler {
     if (hasOmsTool) {
       lines.push(
         "",
-        "Available OMS path: oms_summary_search -> oms_expand_evidence is the required path for formal memory tests; oms_fts_search is fallback only after summary navigation is empty."
+        "Available OMS path: decide whether memory matters, then call oms_search for ordinary recall; use oms_expand_evidence for summary/raw candidates that still need raw evidence."
       );
     } else {
       lines.push(
