@@ -1,5 +1,6 @@
 import { EventStore } from "../storage/EventStore.js";
 import { Logger } from "../core/Logger.js";
+import type { DebugLogSnapshot } from "../types.js";
 
 export class DebugLogPresenter {
   constructor(
@@ -7,7 +8,7 @@ export class DebugLogPresenter {
     private readonly logger: Logger
   ) {}
 
-  present() {
+  present(): DebugLogSnapshot {
     return {
       logs: this.logger.recent(),
       events: this.events.recent(),

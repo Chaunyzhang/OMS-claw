@@ -21,3 +21,6 @@ export { CompactionPlanner } from "./context/CompactionPlanner.js";
 export { Redactor } from "./git/Redactor.js";
 export { GitMdWriter } from "./git/GitMdWriter.js";
 export { RuntimeAttestation } from "./core/RuntimeAttestation.js";
+export { controlPanelContract } from "./ui/ControlPanelContract.js";
+export { DebugLogPresenter } from "./ui/DebugLogPresenter.js";
+export { graphStatusSnapshot } from "./ui/GraphStatusPresenter.js";

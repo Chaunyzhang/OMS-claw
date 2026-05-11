@@ -5,6 +5,8 @@ import { OmsRuntimeRegistry } from "../core/OmsRuntimeRegistry.js";
 import { OMS_MEMORY_REFLEX_PROMPT } from "../context/RecallPolicyPrompt.js";
 import { isProactiveRecallQuery, isTimelineRecallQuery } from "../retrieval/RecallIntent.js";
 import { controlPanelContract } from "../ui/ControlPanelContract.js";
+import { DebugLogPresenter } from "../ui/DebugLogPresenter.js";
+import { graphStatusSnapshot } from "../ui/GraphStatusPresenter.js";
 import { asToolResponse, jsonSchema } from "./OpenClawDiplomat.js";
 import type { OpenClawPluginApi, OpenClawToolDefinition } from "./OpenClawTypes.js";
 import type { EvidencePacket } from "../types.js";
@@ -292,6 +294,26 @@ function registerTools(api: OpenClawPluginApi, runtime: OmsRuntimeRegistry): voi
           "Debug-only raw table inspection. Returns disabled unless OMS debug mode is enabled.",
           jsonSchema({ limit: { type: "number", default: 100 } }),
           (_id, params) => asToolResponse(orchestrator.debugRawTool(params))
+        )
+    },
+    {
+      name: "oms_inspect_graph",
+      build: (orchestrator) =>
+        tool(
+          "oms_inspect_graph",
+          "Return graph-health snapshot data for local OMS inspection UIs.",
+          jsonSchema({}),
+          () => asToolResponse(graphStatusSnapshot(orchestrator))
+        )
+    },
+    {
+      name: "oms_inspect_logs",
+      build: (orchestrator) =>
+        tool(
+          "oms_inspect_logs",
+          "Return recent OMS logs and events for local inspection UIs.",
+          jsonSchema({}),
+          () => asToolResponse(new DebugLogPresenter(orchestrator.events, orchestrator.logger).present())
         )
     },
     {

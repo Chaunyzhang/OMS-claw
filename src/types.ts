@@ -320,3 +320,36 @@ export interface OmsStatus {
   };
   features?: Record<string, LaneStatus | "ready" | "degraded" | "blocked" | "failed" | "unknown">;
 }
+
+export interface GraphStatusSnapshot {
+  agentId: string;
+  rawMessages: number;
+  graphableRawMessages: number;
+  graphEntities: number;
+  graphRelations: number;
+  graphMentions: number;
+  graphOccurrences: number;
+  relationRawRatio: number;
+  relationTypes: Array<{ relationType: string; count: number }>;
+  topNoisyEntities: Array<{ label: string; entityType: string; mentionCount: number }>;
+  lastBuildRun?: {
+    extractorVersion: string;
+    startedAt: string;
+    finishedAt?: string;
+    highWatermarkSequence?: number;
+    rawScanned: number;
+    entitiesUpserted: number;
+    relationsUpserted: number;
+    occurrencesInserted: number;
+    status: string;
+    error?: string;
+  };
+  duplicateRelations: number;
+  duplicateOccurrences: number;
+}
+
+export interface DebugLogSnapshot {
+  logs: Array<unknown>;
+  events: Array<unknown>;
+  visible: string[];
+}

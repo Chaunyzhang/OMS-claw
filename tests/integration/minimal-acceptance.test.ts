@@ -30,8 +30,16 @@ describe("minimal runnable acceptance scenario", () => {
     expect(harness.contextEngineIds).toContain("oms");
     expect(harness.memoryCapabilityIds).toContain("oms");
     expect(harness.toolNames).toContain("oms_expand_evidence");
+    expect(harness.toolNames).toContain("oms_inspect_graph");
+    expect(harness.toolNames).toContain("oms_inspect_logs");
     expect(harness.eventNames).toContain("before_prompt_build");
     expect(harness.eventNames).toContain("agent_end");
+    const controlPanel = harness.memoryCapabilities[0]?.controlPanel as
+      | { inspection?: { schemaVersion?: string; panels?: Array<{ id: string; toolNames: string[] }> } }
+      | undefined;
+    expect(controlPanel?.inspection?.schemaVersion).toBe("oms-ui-contract-v1");
+    expect(controlPanel?.inspection?.panels?.some((panel) => panel.id === "graph_health" && panel.toolNames.includes("oms_inspect_graph"))).toBe(true);
+    expect(controlPanel?.inspection?.panels?.some((panel) => panel.id === "logs" && panel.toolNames.includes("oms_inspect_logs"))).toBe(true);
     const oms = (harness.orchestrator as OmsRuntimeRegistry).forContext({ agentId: "accept-agent" });
 
     oms.ingest({
