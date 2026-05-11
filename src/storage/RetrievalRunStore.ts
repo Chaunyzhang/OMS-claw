@@ -125,6 +125,40 @@ export class RetrievalRunStore {
     });
   }
 
+  completeRun(input: {
+    runId: string;
+    status: string;
+    timingsMs?: Record<string, number>;
+    metadata?: Record<string, unknown>;
+  }): void {
+    const existing = this.db
+      .prepare("SELECT metadata_json AS metadataJson FROM retrieval_runs WHERE run_id = ?")
+      .get(input.runId) as { metadataJson?: string } | undefined;
+    let currentMetadata: Record<string, unknown> = {};
+    if (typeof existing?.metadataJson === "string" && existing.metadataJson.trim().length > 0) {
+      try {
+        const parsed = JSON.parse(existing.metadataJson) as Record<string, unknown>;
+        if (parsed && typeof parsed === "object") {
+          currentMetadata = parsed;
+        }
+      } catch {
+        currentMetadata = {};
+      }
+    }
+    this.db
+      .prepare(
+        `UPDATE retrieval_runs
+         SET status = ?, timings_json = ?, metadata_json = ?
+         WHERE run_id = ?`
+      )
+      .run(
+        input.status,
+        JSON.stringify(input.timingsMs ?? {}),
+        JSON.stringify({ ...currentMetadata, ...(input.metadata ?? {}) }),
+        input.runId
+      );
+  }
+
   countRuns(): number {
     return Number((this.db.prepare("SELECT COUNT(*) AS count FROM retrieval_runs").get() as { count: number }).count);
   }

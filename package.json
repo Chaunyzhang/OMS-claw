@@ -50,6 +50,8 @@
     "realtest:bundle": "node dist/realtest/scripts/build-judge-bundle.js",
     "realtest:judge": "node dist/realtest/scripts/run-codex-judge.js",
     "realtest:verdict": "node dist/realtest/scripts/merge-verdict.js",
-    "realtest:case": "node --experimental-sqlite dist/realtest/scripts/run-real-case.js"
+    "realtest:case": "node --experimental-sqlite dist/realtest/scripts/run-real-case.js",
+    "realtest:batch": "node --experimental-sqlite dist/realtest/scripts/run-batch.js",
+    "realtest:summary": "node dist/realtest/scripts/summarize-results.js"
   }
 }

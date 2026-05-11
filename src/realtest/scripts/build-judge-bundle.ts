@@ -38,6 +38,7 @@ export function buildJudgeBundle(input: { caseDir: string; runDir: string; bundl
     "readiness.json",
     "collector-report.json",
     "runtime-report.json",
+    "query-trace.json",
     "final-answer.txt",
     "final-answer.meta.json"
   ]
@@ -74,7 +75,7 @@ export function buildJudgeBundle(input: { caseDir: string; runDir: string; bundl
     bundleDir,
     transcriptFile: frozenTranscriptFile,
     finalAnswerFile: frozenFinalAnswerFile,
-    runtimeReportFiles: copiedRunFiles.filter((file) => /runtime-report|collector-report|preflight|readiness/u.test(basename(file.target))),
+    runtimeReportFiles: copiedRunFiles.filter((file) => /runtime-report|collector-report|preflight|readiness|query-trace/u.test(basename(file.target))),
     senderArtifacts: copiedRunFiles.filter((file) => /^send-/u.test(basename(file.target))),
     caseFiles: copiedCaseFiles.map((file) => ({ file: file.target, hash: sha256File(file.target) })),
     bundleCreatedAt: new Date().toISOString(),

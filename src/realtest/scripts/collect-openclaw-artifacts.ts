@@ -22,6 +22,7 @@ interface CollectorReport {
   transcriptFile: string | null;
   finalAnswerFile: string | null;
   runtimeReportFile: string | null;
+  queryTraceFile: string | null;
   omsDbPath: string | null;
   dbReport: unknown;
   failureReasons: string[];
@@ -55,6 +56,7 @@ export function collectOpenClawArtifacts(input: { runDir: string; transcriptFile
       transcriptFile: null,
       finalAnswerFile: null,
       runtimeReportFile: null,
+      queryTraceFile: null,
       omsDbPath: null,
       dbReport: null,
       failureReasons: preflight.failureReasons ?? ["preflight_failed"],
@@ -73,11 +75,19 @@ export function collectOpenClawArtifacts(input: { runDir: string; transcriptFile
     transcriptFile && existsSync(transcriptFile) ? writeFinalAnswerGuess(collectedDir, transcriptFile) : null;
   const dbPath = input.dbPath ? resolve(input.dbPath) : resolveDbPath(preflight?.environment?.configEntryOms);
   const dbReport = dbPath && existsSync(dbPath) ? inspectOmsDb(dbPath) : { ok: false, reason: "oms_db_path_missing_or_not_found", dbPath };
+  const queryTraceFile = join(input.runDir, "query-trace.json");
+  writeJson(
+    queryTraceFile,
+    dbPath && existsSync(dbPath)
+      ? inspectLatestQueryTrace({ dbPath, sessionId: resolveQuestionSessionKey(input.runDir) })
+      : { ok: false, reason: "oms_db_path_missing_or_not_found", dbPath }
+  );
   const runtimeReportFile = join(input.runDir, "runtime-report.json");
   writeJson(runtimeReportFile, {
     collectedAt: new Date().toISOString(),
     omsDbPath: dbPath,
-    dbReport
+    dbReport,
+    queryTraceFile
   });
 
   const missing: string[] = [];
@@ -97,6 +107,7 @@ export function collectOpenClawArtifacts(input: { runDir: string; transcriptFile
     transcriptFile,
     finalAnswerFile,
     runtimeReportFile,
+    queryTraceFile,
     omsDbPath: dbPath,
     dbReport,
     failureReasons: missing,
@@ -107,6 +118,237 @@ export function collectOpenClawArtifacts(input: { runDir: string; transcriptFile
   };
   writeJson(join(input.runDir, "collector-report.json"), report);
   return report;
+}
+
+function inspectLatestQueryTrace(input: { dbPath: string; sessionId: string | null }): unknown {
+  const db = new DatabaseSync(input.dbPath, { readOnly: true });
+  try {
+    const selectedRun =
+      (input.sessionId
+        ? db
+            .prepare(
+              `SELECT run_id AS runId, session_id AS sessionId, created_at AS createdAt, query, mode, intent, status,
+                      timings_json AS timingsJson, metadata_json AS metadataJson
+               FROM retrieval_runs
+               WHERE session_id = ?
+               ORDER BY created_at DESC
+               LIMIT 1`
+            )
+            .get(input.sessionId)
+        : undefined) ??
+      db
+        .prepare(
+          `SELECT run_id AS runId, session_id AS sessionId, created_at AS createdAt, query, mode, intent, status,
+                  timings_json AS timingsJson, metadata_json AS metadataJson
+           FROM retrieval_runs
+           ORDER BY created_at DESC
+           LIMIT 1`
+        )
+        .get();
+    if (!selectedRun || typeof selectedRun !== "object") {
+      return {
+        ok: false,
+        reason: input.sessionId ? "no_retrieval_run_for_question_session" : "no_retrieval_run_found",
+        sessionId: input.sessionId,
+        dbPath: input.dbPath
+      };
+    }
+    const run = selectedRun as {
+      runId: string;
+      sessionId?: string;
+      createdAt: string;
+      query: string;
+      mode: string;
+      intent: string;
+      status: string;
+      timingsJson: string;
+      metadataJson: string;
+    };
+    const metadata = parseJson<Record<string, unknown>>(run.metadataJson) ?? {};
+    const queryId =
+      typeof metadata.queryId === "string"
+        ? metadata.queryId
+        : (
+            db
+              .prepare("SELECT query_id AS queryId FROM evidence_packets WHERE run_id = ? ORDER BY created_at DESC LIMIT 1")
+              .get(run.runId) as { queryId?: string } | undefined
+          )?.queryId;
+    const fusionRunId =
+      typeof metadata.fusionRunId === "string"
+        ? metadata.fusionRunId
+        : (
+            db
+              .prepare("SELECT fusion_run_id AS fusionRunId FROM evidence_packets WHERE run_id = ? ORDER BY created_at DESC LIMIT 1")
+              .get(run.runId) as { fusionRunId?: string } | undefined
+          )?.fusionRunId;
+    const packet = db
+      .prepare(
+        `SELECT packet_id AS packetId, status, selected_authoritative_raw_count AS selectedAuthoritativeRawCount,
+                selected_raw_count AS selectedRawCount, summary_derived_raw_count AS summaryDerivedRawCount,
+                raw_excerpt_hash AS rawExcerptHash, raw_excerpt_preview_json AS rawExcerptPreviewJson,
+                authority_report_json AS authorityReportJson, delivery_report_json AS deliveryReportJson,
+                metadata_json AS metadataJson, created_at AS createdAt
+         FROM evidence_packets
+         WHERE run_id = ?
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get(run.runId) as
+      | {
+          packetId: string;
+          status: string;
+          selectedAuthoritativeRawCount: number;
+          selectedRawCount: number;
+          summaryDerivedRawCount: number;
+          rawExcerptHash?: string;
+          rawExcerptPreviewJson: string;
+          authorityReportJson: string;
+          deliveryReportJson: string;
+          metadataJson: string;
+          createdAt: string;
+        }
+      | undefined;
+
+    const candidateRows = queryId
+      ? db
+          .prepare(
+            `SELECT lane, status, target_kind AS targetKind, target_id AS targetId, raw_id_hint AS rawIdHint,
+                    summary_id_hint AS summaryIdHint, rank, score, reason_json AS reasonJson
+             FROM retrieval_candidates
+             WHERE query_id = ?
+             ORDER BY lane ASC, rank ASC, score DESC`
+          )
+          .all(queryId)
+      : db
+          .prepare(
+            `SELECT lane, status, target_kind AS targetKind, target_id AS targetId, raw_id_hint AS rawIdHint,
+                    summary_id_hint AS summaryIdHint, rank, score, reason_json AS reasonJson
+             FROM retrieval_candidates
+             WHERE run_id = ?
+             ORDER BY lane ASC, rank ASC, score DESC`
+          )
+          .all(run.runId);
+
+    const fusedCandidates =
+      fusionRunId && typeof fusionRunId === "string"
+        ? db
+            .prepare(
+              `SELECT raw_id AS rawId, fused_rank AS fusedRank, fused_score AS fusedScore,
+                      lane_votes_json AS laneVotesJson, reason_json AS reasonJson
+               FROM fused_candidates
+               WHERE fusion_run_id = ?
+               ORDER BY fused_rank ASC
+               LIMIT 20`
+            )
+            .all(fusionRunId)
+            .map((row) => {
+              const value = row as {
+                rawId: string;
+                fusedRank: number;
+                fusedScore: number;
+                laneVotesJson: string;
+                reasonJson: string;
+              };
+              return {
+                rawId: value.rawId,
+                fusedRank: value.fusedRank,
+                fusedScore: value.fusedScore,
+                laneVotes: parseJson<unknown[]>(value.laneVotesJson) ?? [],
+                reason: parseJson<Record<string, unknown>>(value.reasonJson) ?? {}
+              };
+            })
+        : [];
+
+    const groupedCandidates = new Map<
+      string,
+      {
+        candidateCount: number;
+        statuses: string[];
+        topCandidates: Array<Record<string, unknown>>;
+      }
+    >();
+    for (const row of candidateRows) {
+      const value = row as {
+        lane?: string;
+        status?: string;
+        targetKind?: string;
+        targetId?: string;
+        rawIdHint?: string;
+        summaryIdHint?: string;
+        rank?: number;
+        score?: number;
+        reasonJson?: string;
+      };
+      const lane = String(value.lane ?? "unknown");
+      const entry = groupedCandidates.get(lane) ?? { candidateCount: 0, statuses: [], topCandidates: [] };
+      entry.candidateCount += 1;
+      if (value.status && !entry.statuses.includes(value.status)) {
+        entry.statuses.push(value.status);
+      }
+      if (entry.topCandidates.length < 5) {
+        entry.topCandidates.push({
+          targetKind: value.targetKind ?? null,
+          targetId: value.targetId ?? null,
+          rawIdHint: value.rawIdHint ?? null,
+          summaryIdHint: value.summaryIdHint ?? null,
+          rank: value.rank ?? null,
+          score: value.score ?? null,
+          reason: parseJson<Record<string, unknown>>(value.reasonJson ?? "{}") ?? {}
+        });
+      }
+      groupedCandidates.set(lane, entry);
+    }
+
+    return {
+      ok: true,
+      dbPath: input.dbPath,
+      sessionId: run.sessionId ?? input.sessionId,
+      run: {
+        runId: run.runId,
+        createdAt: run.createdAt,
+        query: run.query,
+        mode: run.mode,
+        intent: run.intent,
+        status: run.status,
+        timingsMs: parseJson<Record<string, number>>(run.timingsJson) ?? {}
+      },
+      summary: {
+        queryId: queryId ?? null,
+        caseId: metadata.caseId ?? null,
+        requiredLane: metadata.requiredLane ?? null,
+        lanesUsed: Array.isArray(metadata.lanesUsed) ? metadata.lanesUsed : Array.from(groupedCandidates.keys()),
+        lanesDegraded: Array.isArray(metadata.lanesDegraded) ? metadata.lanesDegraded : [],
+        candidateCount: typeof metadata.candidateCount === "number" ? metadata.candidateCount : candidateRows.length,
+        fusionRunId: fusionRunId ?? null,
+        answerPolicy: metadata.answerPolicy ?? null,
+        reason: metadata.reason ?? null,
+        packetId: metadata.packetId ?? packet?.packetId ?? null,
+        packetStatus: metadata.packetStatus ?? packet?.status ?? null,
+        packetDelivered:
+          typeof metadata.packetDelivered === "boolean" ? metadata.packetDelivered : (metadata.packetStatus ?? packet?.status) === "delivered",
+        sourceRoutes: Array.isArray(metadata.sourceRoutes) ? metadata.sourceRoutes : parseJson<Record<string, unknown>>(packet?.metadataJson ?? "{}")?.sourceRoutes ?? []
+      },
+      candidatesByLane: Object.fromEntries(groupedCandidates.entries()),
+      fusedCandidates,
+      packet: packet
+        ? {
+            packetId: packet.packetId,
+            status: packet.status,
+            selectedAuthoritativeRawCount: packet.selectedAuthoritativeRawCount,
+            selectedRawCount: packet.selectedRawCount,
+            summaryDerivedRawCount: packet.summaryDerivedRawCount,
+            rawExcerptHash: packet.rawExcerptHash ?? null,
+            rawExcerptPreview: parseJson<unknown[]>(packet.rawExcerptPreviewJson) ?? [],
+            authorityReport: parseJson<Record<string, unknown>>(packet.authorityReportJson) ?? {},
+            deliveryReport: parseJson<Record<string, unknown>>(packet.deliveryReportJson) ?? {},
+            metadata: parseJson<Record<string, unknown>>(packet.metadataJson) ?? {},
+            createdAt: packet.createdAt
+          }
+        : null
+    };
+  } finally {
+    db.close();
+  }
 }
 
 function inspectOmsDb(dbPath: string): unknown {
@@ -164,6 +406,11 @@ function resolveTranscriptFile(runDir: string, explicitTranscriptFile?: string):
     return join(homedir(), ".openclaw", "agents", agentId, "sessions", `${entry.sessionId}.jsonl`);
   }
   return null;
+}
+
+function resolveQuestionSessionKey(runDir: string): string | null {
+  const questionArtifact = readOptionalJson<{ sessionKey?: string }>(join(runDir, "send-question.json"));
+  return typeof questionArtifact?.sessionKey === "string" ? questionArtifact.sessionKey : null;
 }
 
 function copyTranscriptSnapshot(source: string, collectedDir: string): string {
@@ -233,6 +480,14 @@ function resolveDbPath(entryConfig: unknown): string | null {
   }
   const agentId = typeof config.agentId === "string" ? config.agentId : "oms-agent-default";
   return join(homedir(), ".openclaw", "oms", `${agentId}.sqlite`);
+}
+
+function parseJson<T>(text: string): T | undefined {
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    return undefined;
+  }
 }
 
 function readOptionalJson<T>(path: string): T | undefined {

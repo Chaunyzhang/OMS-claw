@@ -126,8 +126,24 @@ export class RetrievalRouter {
     const packetDelivered = packet?.status === "delivered";
     const mustHavePacket = mode === "medium" || mode === "high" || mode === "ultra" || evidencePolicy === "material_evidence";
     timings.total = Date.now() - started;
+    const answerPolicy: OmsRetrieveResult["answerPolicy"] =
+      packetDelivered && requiredLaneSatisfied ? "ready_for_openclaw" : packetDelivered ? "candidate_only" : "must_not_answer_from_candidates";
+    const baseTrace = {
+      queryId,
+      caseId: input.caseId,
+      requiredLane: input.requiredLane,
+      lanesUsed,
+      lanesDegraded,
+      candidateCount,
+      fusionRunId,
+      sourceRoutes,
+      packetId: packet?.packetId ?? null,
+      packetStatus: packet?.status ?? null,
+      packetDelivered,
+      answerPolicy
+    };
     if (packetDelivered && requiredLaneSatisfied) {
-      return {
+      const result: OmsRetrieveResult = {
         ok: true,
         queryId,
         mode,
@@ -136,10 +152,17 @@ export class RetrievalRouter {
         candidateCount,
         packet,
         details: { fusionRunId, timingsMs: timings, fusedCandidates },
-        answerPolicy: "ready_for_openclaw"
+        answerPolicy
       };
+      this.retrievalRuns.completeRun({
+        runId,
+        status: "ready_for_openclaw",
+        timingsMs: timings,
+        metadata: baseTrace
+      });
+      return result;
     }
-    return {
+    const result: OmsRetrieveResult = {
       ok: !mustHavePacket && candidateCount > 0,
       queryId,
       mode,
@@ -149,8 +172,15 @@ export class RetrievalRouter {
       packet,
       details: { fusionRunId, timingsMs: timings, fusedCandidates },
       reason: packet === null ? "no_candidates" : packet.reason ?? "no_authoritative_raw_evidence",
-      answerPolicy: packetDelivered ? "candidate_only" : "must_not_answer_from_candidates"
+      answerPolicy
     };
+    this.retrievalRuns.completeRun({
+      runId,
+      status: result.answerPolicy,
+      timingsMs: timings,
+      metadata: { ...baseTrace, reason: result.reason ?? null }
+    });
+    return result;
   }
 
   private async runLanes(input: {

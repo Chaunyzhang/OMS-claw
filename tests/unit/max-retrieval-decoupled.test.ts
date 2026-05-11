@@ -284,6 +284,21 @@ describe("SQLite max retrieval decoupled architecture", () => {
     expect(result.packet.rawExcerpts[0].originalText).toContain("2022");
     expect(JSON.stringify(result.packet)).not.toContain("2021");
     expect(result.packet.sourceRoutes).toEqual(expect.arrayContaining(["fts_bm25"]));
+    const runTrace = oms.connection.db
+      .prepare(
+        `SELECT status, timings_json AS timingsJson, metadata_json AS metadataJson
+         FROM retrieval_runs
+         ORDER BY created_at DESC
+         LIMIT 1`
+      )
+      .get() as { status: string; timingsJson: string; metadataJson: string };
+    const runMetadata = JSON.parse(runTrace.metadataJson) as Record<string, unknown>;
+    expect(runTrace.status).toBe("ready_for_openclaw");
+    expect(JSON.parse(runTrace.timingsJson)).toHaveProperty("total");
+    expect(runMetadata.answerPolicy).toBe("ready_for_openclaw");
+    expect(runMetadata.packetStatus).toBe("delivered");
+    expect(runMetadata.lanesUsed).toEqual(expect.arrayContaining(["fts_bm25", "trigram", "summary_dag", "ann_vector"]));
+    expect(runMetadata.candidateCount).toBeGreaterThan(0);
     oms.connection.close();
   });
 
