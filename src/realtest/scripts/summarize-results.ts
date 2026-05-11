@@ -42,6 +42,7 @@ export interface BatchSummary {
   ok: boolean;
   generatedAt: string;
   sourceRoot: string;
+  notes: string[];
   totalRuns: number;
   passedRuns: number;
   failedRuns: number;
@@ -59,6 +60,22 @@ export interface BatchSummary {
   laneUsageCounts: Record<string, number>;
   degradedLaneCounts: Record<string, number>;
   failureReasonCounts: Record<string, number>;
+  pipeline: {
+    totalRuns: number;
+    envFailedRuns: number;
+    runnableRuns: number;
+    validRuns: number;
+    invalidRuns: number;
+    passRateOnAllRuns: number;
+    passRateOnRunnableRuns: number | null;
+  };
+  capability: {
+    denominator: "valid_runs_only";
+    qualifiedRuns: number;
+    overallPassRate: number | null;
+    answerCorrectRate: number | null;
+    authoritativeEvidenceRate: number | null;
+  };
   runs: Array<{
     runId: string;
     caseId: string;
@@ -125,11 +142,21 @@ export function summarizeResults(input: { sourceRoot: string; outFile?: string }
   const failureReasonCounts = countBy(runs.flatMap((run) => run.failureReasons));
   const questionDurations = runs.map((run) => run.questionDurationMs).filter((value): value is number => typeof value === "number");
   const candidateCounts = runs.map((run) => run.candidateCount).filter((value): value is number => typeof value === "number");
+  const runnableRuns = runs.filter((run) => run.status !== "ENV_FAIL");
+  const validRuns = runs.filter((run) => run.runValid);
+  const validPassRuns = validRuns.filter((run) => run.overallPass);
+  const validAnswerRuns = validRuns.filter((run) => run.answerCorrect);
+  const validEvidenceRuns = validRuns.filter((run) => run.authoritativeEvidenceValid);
+  const notes = [
+    "pipeline metrics include every discovered run under sourceRoot, including ENV_FAIL and invalid runs.",
+    "capability metrics reflect current plugin ability only on valid runs where the benchmark artifacts were complete enough to judge the plugin itself."
+  ];
 
   const summary: BatchSummary = {
     ok: true,
     generatedAt: new Date().toISOString(),
     sourceRoot,
+    notes,
     totalRuns: runs.length,
     passedRuns: runs.filter((run) => run.overallPass).length,
     failedRuns: runs.filter((run) => !run.overallPass && run.status !== "ENV_FAIL").length,
@@ -147,6 +174,22 @@ export function summarizeResults(input: { sourceRoot: string; outFile?: string }
     laneUsageCounts,
     degradedLaneCounts,
     failureReasonCounts,
+    pipeline: {
+      totalRuns: runs.length,
+      envFailedRuns: runs.filter((run) => run.status === "ENV_FAIL").length,
+      runnableRuns: runnableRuns.length,
+      validRuns: validRuns.length,
+      invalidRuns: runs.filter((run) => run.status !== "ENV_FAIL" && !run.runValid).length,
+      passRateOnAllRuns: rate(runs.filter((run) => run.overallPass).length, runs.length),
+      passRateOnRunnableRuns: nullableRate(runnableRuns.filter((run) => run.overallPass).length, runnableRuns.length)
+    },
+    capability: {
+      denominator: "valid_runs_only",
+      qualifiedRuns: validRuns.length,
+      overallPassRate: nullableRate(validPassRuns.length, validRuns.length),
+      answerCorrectRate: nullableRate(validAnswerRuns.length, validRuns.length),
+      authoritativeEvidenceRate: nullableRate(validEvidenceRuns.length, validRuns.length)
+    },
     runs: runs.map((run) => ({
       runId: run.runId,
       caseId: run.caseId,
@@ -220,6 +263,13 @@ function median(values: number[]): number | null {
 function rate(numerator: number, denominator: number): number {
   if (denominator === 0) {
     return 0;
+  }
+  return Number(((numerator / denominator) * 100).toFixed(2));
+}
+
+function nullableRate(numerator: number, denominator: number): number | null {
+  if (denominator === 0) {
+    return null;
   }
   return Number(((numerator / denominator) * 100).toFixed(2));
 }
